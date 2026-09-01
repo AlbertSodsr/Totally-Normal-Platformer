@@ -208,6 +208,7 @@
         let hazards = []; 
         let fakePlatforms = []; 
         let movingHazards = []; 
+        let honingEnemies = []; // Honing platforms/enemies
         let goal = {};
 
         let transitionQueue = [];
@@ -241,6 +242,7 @@
                 hazards = [];
                 fakePlatforms = [];
                 movingHazards = [];
+                honingEnemies = [];
                 player.x = 50;
                 player.y = 300;
                 player.vx = 0;
@@ -257,7 +259,10 @@
             }
 
             if (isInitial) {
-                platforms.push({ x: 0, y: 380, width: 160, height: 70, color: "#444" });
+                platforms.push({ 
+                    x: 0, y: 380, width: 160, height: 70, color: "#444", 
+                    isMoving: false, vx: 0, minX: 0, maxX: 0 
+                });
             }
 
             let currentX = startX;
@@ -270,6 +275,12 @@
             while (currentX < startX + chunkLength) {
                 let gap = 50 + random() * (maxJumpDistance - 50);
                 let platWidth = 80 + random() * 70;
+                
+                // Normal Mode only: 30% chance to cut platform size in half
+                if (!settings.easyMode && random() < 0.3) {
+                    platWidth *= 0.5;
+                }
+
                 let heightDelta = (random() - 0.5) * (maxVerticalStep * 1.5);
                 let platY = lastY + heightDelta;
 
@@ -288,13 +299,27 @@
                         fadeTimer: 0 
                     });
                 } else {
-                    platforms.push({ x: currentX + gap, y: platY, width: platWidth, height: 20, color: "#666" });
+                    // Chance for moving platforms
+                    let isMoving = random() < 0.25;
+                    let moveSpeed = isMoving ? (0.8 + random() * 1.2) : 0;
+                    
+                    platforms.push({ 
+                        x: currentX + gap, 
+                        y: platY, 
+                        width: platWidth, 
+                        height: 20, 
+                        color: isMoving ? "#5577aa" : "#666",
+                        isMoving: isMoving,
+                        vx: moveSpeed,
+                        minX: currentX + gap - 40,
+                        maxX: currentX + gap + 60
+                    });
 
-                    if (random() < 0.35 && difficultyLevel > 1 && platWidth > 100) {
+                    if (random() < 0.35 && difficultyLevel > 1 && platWidth > 60) {
                         hazards.push({
-                            x: currentX + gap + 15,
+                            x: currentX + gap + 10,
                             y: platY - 8,
-                            width: platWidth - 30,
+                            width: platWidth - 20,
                             height: 8
                         });
                     }
@@ -310,6 +335,18 @@
                             radius: 11
                         });
                     }
+
+                    // Chance for Honing Platform Enemy
+                    if (random() < 0.2 && difficultyLevel > 1) {
+                        honingEnemies.push({
+                            x: currentX + gap + platWidth / 2 - 20,
+                            y: platY - 60,
+                            width: 40,
+                            height: 16,
+                            alive: true,
+                            cleared: false // track if player leaped over it
+                        });
+                    }
                 }
 
                 currentX += gap + platWidth;
@@ -317,7 +354,10 @@
             }
 
             goal = { x: currentX + 50, y: 320, width: 30, height: 60 };
-            platforms.push({ x: currentX, y: 380, width: 220, height: 70, color: "#444" });
+            platforms.push({ 
+                x: currentX, y: 380, width: 220, height: 70, color: "#444", 
+                isMoving: false, vx: 0, minX: 0, maxX: 0 
+            });
         }
 
         // Trigger loading screen reset sequence
@@ -449,6 +489,16 @@
                 if (keys["ArrowLeft"] || keys["KeyA"]) player.vx = -player.speed;
                 if (keys["ArrowRight"] || keys["KeyD"]) player.vx = player.speed;
 
+                // Move platforms
+                for (let p of platforms) {
+                    if (p.isMoving) {
+                        p.x += p.vx;
+                        if (p.x < p.minX || p.x + p.width > p.maxX) {
+                            p.vx *= -1;
+                        }
+                    }
+                }
+
                 player.x += player.vx;
 
                 for (let p of platforms) {
@@ -478,6 +528,10 @@
                             player.y = p.y - player.height;
                             player.vy = 0;
                             player.grounded = true;
+                            // Carry player on moving platform
+                            if (p.isMoving) {
+                                player.x += p.vx;
+                            }
                         } else if (player.vy < 0) { 
                             player.y = p.y + p.height;
                             player.vy = 0;
@@ -485,10 +539,9 @@
                     }
                 }
 
-                // Susforms Check: Easy Mode keeps the collision solid until the 0.5s fade completes
+                // Susforms Check
                 for (let i = fakePlatforms.length - 1; i >= 0; i--) {
                     let fp = fakePlatforms[i];
-                    
                     let canCollide = settings.easyMode ? true : (fp.state === 'normal');
 
                     if (
@@ -502,7 +555,7 @@
                         if (isMovingHorizontal) {
                             if (fp.state === 'normal') {
                                 fp.state = 'fading';
-                                fp.fadeTimer = 30; // 0.5 seconds @ 60fps
+                                fp.fadeTimer = 30;
                             }
                         } else {
                             if (fp.state === 'fading' && !settings.easyMode) {
@@ -521,6 +574,48 @@
                             fakePlatforms.splice(i, 1);
                             triggerShake(10, 3);
                         }
+                    }
+                }
+
+                // Update Honing Platform Enemies
+                for (let i = honingEnemies.length - 1; i >= 0; i--) {
+                    let he = honingEnemies[i];
+                    if (!he.alive) continue;
+
+                    // Nerfed speed & tracking range in Easy Mode
+                    let speed = settings.easyMode ? 0.6 : 2.2;
+                    let aggroRange = settings.easyMode ? 200 : 500;
+
+                    let dx = player.x - he.x;
+                    let dy = player.y - he.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < aggroRange && dist > 0) {
+                        he.x += (dx / dist) * speed;
+                        he.y += (dy / dist) * speed;
+                    }
+
+                    // Check jump-over kill condition: if player passes over top of honing enemy without touching
+                    if (
+                        player.x + player.width > he.x &&
+                        player.x < he.x + he.width &&
+                        player.y + player.height < he.y &&
+                        player.y + player.height > he.y - 40
+                    ) {
+                        he.cleared = true;
+                        he.alive = false;
+                        triggerShake(12, 4);
+                        continue;
+                    }
+
+                    // Collision check (Kills player)
+                    if (
+                        player.x < he.x + he.width &&
+                        player.x + player.width > he.x &&
+                        player.y < he.y + he.height &&
+                        player.y + player.height > he.y
+                    ) {
+                        resetPlayer();
                     }
                 }
 
@@ -573,6 +668,7 @@
                     hazards = []; 
                     fakePlatforms = [];
                     movingHazards = [];
+                    honingEnemies = [];
                     transitionTimer = 0;
                 }
             } else if (gameState === STATE.TRANSITION) {
@@ -664,7 +760,7 @@
             for (let p of platforms) {
                 ctx.fillStyle = p.color;
                 ctx.fillRect(p.x, p.y, p.width, p.height);
-                ctx.strokeStyle = "#222";
+                ctx.strokeStyle = p.isMoving ? "#77aaff" : "#222";
                 ctx.strokeRect(p.x, p.y, p.width, p.height);
                 if (settings.showHitboxes) {
                     ctx.strokeStyle = "#00ff00";
@@ -684,10 +780,29 @@
                 ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
 
                 if (settings.showHitboxes) {
-                    // Show green active hitbox while readable by collision system
                     let activeHitbox = settings.easyMode ? true : (fp.state === 'normal');
                     ctx.strokeStyle = activeHitbox ? "#00ff00" : "#ff0000";
                     ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
+                }
+            }
+
+            // Draw Honing Platform Enemies
+            for (let he of honingEnemies) {
+                if (!he.alive) continue;
+                ctx.fillStyle = "#9900cc";
+                ctx.fillRect(he.x, he.y, he.width, he.height);
+                ctx.strokeStyle = "#ff00ff";
+                ctx.strokeRect(he.x, he.y, he.width, he.height);
+
+                // Eye detail to show it's tracking
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(he.x + he.width / 2 - 4, he.y + 4, 8, 8);
+                ctx.fillStyle = "#ff0000";
+                ctx.fillRect(he.x + he.width / 2 - 2, he.y + 6, 4, 4);
+
+                if (settings.showHitboxes) {
+                    ctx.strokeStyle = "#00ff00";
+                    ctx.strokeRect(he.x, he.y, he.width, he.height);
                 }
             }
 
