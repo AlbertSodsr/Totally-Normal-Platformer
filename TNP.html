@@ -49,6 +49,60 @@
             pointer-events: none;
             text-shadow: 1px 1px 0px #000;
         }
+        .settings-btn {
+            position: absolute;
+            top: 12px;
+            right: 15px;
+            background: #333;
+            color: #fff;
+            border: 2px solid #555;
+            padding: 4px 10px;
+            font-size: 14px;
+            cursor: pointer;
+            border-radius: 4px;
+            pointer-events: auto;
+            z-index: 10;
+        }
+        .settings-btn:hover {
+            background: #444;
+        }
+        .settings-menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(20, 20, 20, 0.95);
+            border: 2px solid #555;
+            padding: 25px;
+            border-radius: 8px;
+            text-align: center;
+            display: none;
+            z-index: 20;
+            box-shadow: 0 0 15px rgba(0,0,0,0.8);
+        }
+        .settings-menu h2 {
+            margin-top: 0;
+            color: #ff3366;
+        }
+        .settings-menu label {
+            display: block;
+            margin: 15px 0;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .settings-menu button {
+            background: #ff3366;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .settings-menu button:hover {
+            background: #e02e5b;
+        }
         .instructions {
             margin-top: 10px;
             font-size: 14px;
@@ -61,10 +115,21 @@
 
     <div id="game-container">
         <div class="ui-overlay">
-            <span id="ui-level">Level: 1/5</span>
+            <span id="ui-progress">Distance: 0m</span>
             <span id="ui-deaths">Deaths: 0</span>
         </div>
+        <button class="settings-btn" id="settingsBtn">Settings (ESC)</button>
         <div id="ui-seed" class="seed-display">Seed: --</div>
+        
+        <div class="settings-menu" id="settingsMenu">
+            <h2>Settings</h2>
+            <label>
+                <input type="checkbox" id="hitboxToggle"> Show Hitboxes
+            </label>
+            <br>
+            <button id="closeSettings">Resume Game</button>
+        </div>
+
         <canvas id="gameCanvas" width="800" height="450"></canvas>
     </div>
     <div class="instructions">Controls: A/D or Arrow Keys to Move | W or Space to Jump | R to Restart Level</div>
@@ -74,17 +139,27 @@
         const ctx = canvas.getContext("2d");
 
         // UI Elements
-        const uiLevel = document.getElementById("ui-level");
+        const uiProgress = document.getElementById("ui-progress");
         const uiDeaths = document.getElementById("ui-deaths");
         const uiSeed = document.getElementById("ui-seed");
+        const settingsBtn = document.getElementById("settingsBtn");
+        const settingsMenu = document.getElementById("settingsMenu");
+        const closeSettingsBtn = document.getElementById("closeSettings");
+        const hitboxToggle = document.getElementById("hitboxToggle");
 
         // Game States
-        const STATE = { START: 0, PLAYING: 1, LEVEL_CLEAR: 2, VICTORY: 3, GAME_OVER: 4 };
+        const STATE = { START: 0, PLAYING: 1, TRANSITION: 2, VICTORY: 3, SETTINGS: 4 };
         let gameState = STATE.START;
+        let previousState = STATE.PLAYING;
 
-        let currentLevel = 1;
         let totalDeaths = 0;
         let currentSeedVal = 0;
+        let difficultyLevel = 1;
+
+        // Settings config
+        let settings = {
+            showHitboxes: false
+        };
 
         // Player Object
         let player = {
@@ -108,6 +183,10 @@
         let movingHazards = []; 
         let goal = {};
 
+        // Transition management variables
+        let transitionQueue = [];
+        let transitionTimer = 0;
+
         // Screen Shake Effect
         let shakeTimer = 0;
         let shakeMagnitude = 0;
@@ -117,37 +196,41 @@
             shakeMagnitude = magnitude;
         }
 
-        // Guaranteed Solvable Procedural Generator
-        function generateLevel(levelNum) {
-            platforms = [];
-            hazards = [];
-            fakePlatforms = [];
-            movingHazards = [];
+        // Initialize / Generate World Chunk
+        function generateChunk(startX, isInitial = false) {
+            if (isInitial) {
+                platforms = [];
+                hazards = [];
+                fakePlatforms = [];
+                movingHazards = [];
+                player.x = 50;
+                player.y = 300;
+                player.vx = 0;
+                player.vy = 0;
 
-            player.x = 50;
-            player.y = 300;
-            player.vx = 0;
-            player.vy = 0;
+                currentSeedVal = Math.floor(Math.random() * 899999 + 100000);
+                uiSeed.innerText = `Seed: TNP-${currentSeedVal}`;
+            }
 
-            currentSeedVal = Math.floor(Math.random() * 899999 + 100000);
-            let seed = currentSeedVal;
-            
+            let seed = currentSeedVal + difficultyLevel * 99;
             function random() {
                 let x = Math.sin(seed++) * 10000;
                 return x - Math.floor(x);
             }
 
-            // Safe Starting Platform
-            platforms.push({ x: 0, y: 380, width: 160, height: 70, color: "#444" });
+            // Starting base platform for this chunk
+            if (isInitial) {
+                platforms.push({ x: 0, y: 380, width: 160, height: 70, color: "#444" });
+            }
 
-            let currentX = 160;
-            let lastY = 380;
-            let totalLength = 1200 + (levelNum * 350);
+            let currentX = startX;
+            let lastY = platforms[platforms.length - 1].y;
+            let chunkLength = 1200 + (difficultyLevel * 200);
 
             const maxJumpDistance = 110; 
             const maxVerticalStep = 95;
 
-            while (currentX < totalLength - 150) {
+            while (currentX < startX + chunkLength) {
                 let gap = 50 + random() * (maxJumpDistance - 50);
                 let platWidth = 80 + random() * 70;
                 let heightDelta = (random() - 0.5) * (maxVerticalStep * 1.5);
@@ -156,29 +239,29 @@
                 if (platY < 130) platY = 130;
                 if (platY > 380) platY = 380;
 
-                let isFake = (random() < 0.2 && levelNum > 1);
+                let isFake = (random() < 0.22 && difficultyLevel > 1);
 
                 if (isFake) {
                     fakePlatforms.push({ x: currentX + gap, y: platY, width: platWidth, height: 20 });
                 } else {
                     platforms.push({ x: currentX + gap, y: platY, width: platWidth, height: 20, color: "#666" });
 
-                    if (random() < 0.35 && levelNum > 1 && platWidth > 100) {
+                    if (random() < 0.35 && difficultyLevel > 1 && platWidth > 100) {
                         hazards.push({
                             x: currentX + gap + 15,
-                            y: platY - 8, // Adjusted for smaller height
+                            y: platY - 8,
                             width: platWidth - 30,
-                            height: 8    // Smaller spikes height (8px instead of 12px)
+                            height: 8
                         });
                     }
 
-                    if (random() < 0.25 && levelNum > 2) {
+                    if (random() < 0.25 && difficultyLevel > 2) {
                         movingHazards.push({
                             x: currentX + gap - gap / 2,
                             y: 160 + random() * 140,
                             startY: 110,
                             endY: 340,
-                            speed: 1.5 + levelNum * 0.3,
+                            speed: 1.5 + difficultyLevel * 0.3,
                             dir: 1,
                             radius: 11
                         });
@@ -189,36 +272,53 @@
                 lastY = platY;
             }
 
-            goal = { x: totalLength - 60, y: 320, width: 30, height: 60 };
-            platforms.push({ x: totalLength - 120, y: 380, width: 220, height: 70, color: "#444" });
-
-            uiSeed.innerText = `Seed: TNP-${currentSeedVal}`;
+            // Goal destination anchor
+            goal = { x: currentX + 50, y: 320, width: 30, height: 60 };
+            // End platform support
+            platforms.push({ x: currentX, y: 380, width: 220, height: 70, color: "#444" });
         }
+
+        // Settings Menu UI Handlers
+        function toggleSettings() {
+            if (gameState === STATE.SETTINGS) {
+                gameState = previousState;
+                settingsMenu.style.display = "none";
+            } else if (gameState === STATE.PLAYING || gameState === STATE.START) {
+                previousState = gameState;
+                gameState = STATE.SETTINGS;
+                settingsMenu.style.display = "block";
+            }
+        }
+
+        settingsBtn.addEventListener("click", toggleSettings);
+        closeSettingsBtn.addEventListener("click", toggleSettings);
+        hitboxToggle.addEventListener("change", (e) => {
+            settings.showHitboxes = e.target.checked;
+        });
 
         // Input Listeners
         window.addEventListener("keydown", (e) => {
             keys[e.code] = true;
 
-            if (e.code === "KeyR") {
+            if (e.code === "Escape") {
+                toggleSettings();
+                return;
+            }
+
+            if (e.code === "KeyR" && gameState !== STATE.SETTINGS) {
                 if (gameState === STATE.PLAYING || gameState === STATE.GAME_OVER) {
                     totalDeaths++;
                     triggerShake(15, 5);
-                    generateLevel(currentLevel);
+                    difficultyLevel = 1;
+                    generateChunk(160, true);
                     gameState = STATE.PLAYING;
                 }
             }
 
             if (gameState === STATE.START && (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW")) {
-                currentLevel = 1;
+                difficultyLevel = 1;
                 totalDeaths = 0;
-                generateLevel(currentLevel);
-                gameState = STATE.PLAYING;
-            }
-
-            if (gameState === STATE.VICTORY && (e.code === "Space" || e.code === "KeyR")) {
-                currentLevel = 1;
-                totalDeaths = 0;
-                generateLevel(currentLevel);
+                generateChunk(160, true);
                 gameState = STATE.PLAYING;
             }
         });
@@ -230,136 +330,154 @@
         function resetPlayer() {
             totalDeaths++;
             triggerShake(20, 8);
-            generateLevel(currentLevel);
+            difficultyLevel = 1;
+            generateChunk(160, true);
         }
 
         // Game Loop Update
         function update() {
-            if (gameState !== STATE.PLAYING) return;
+            if (gameState !== STATE.PLAYING && gameState !== STATE.TRANSITION) return;
 
-            // Check if player is holding horizontal movement keys
             let isMovingHorizontal = keys["ArrowLeft"] || keys["KeyA"] || keys["ArrowRight"] || keys["KeyD"];
 
-            // Horizontal Movement
-            player.vx = 0;
-            if (keys["ArrowLeft"] || keys["KeyA"]) player.vx = -player.speed;
-            if (keys["ArrowRight"] || keys["KeyD"]) player.vx = player.speed;
+            if (gameState === STATE.PLAYING) {
+                // Horizontal Movement
+                player.vx = 0;
+                if (keys["ArrowLeft"] || keys["KeyA"]) player.vx = -player.speed;
+                if (keys["ArrowRight"] || keys["KeyD"]) player.vx = player.speed;
 
-            player.x += player.vx;
+                player.x += player.vx;
 
-            // Horizontal Collisions
-            for (let p of platforms) {
-                if (
-                    player.x < p.x + p.width &&
-                    player.x + player.width > p.x &&
-                    player.y < p.y + p.height &&
-                    player.y + player.height > p.y
-                ) {
-                    if (player.vx > 0) player.x = p.x - player.width;
-                    if (player.vx < 0) player.x = p.x + player.width;
-                }
-            }
-
-            // Vertical Movement
-            player.vy += player.gravity;
-            player.y += player.vy;
-            player.grounded = false;
-
-            // Vertical Collisions with solid platforms
-            for (let p of platforms) {
-                if (
-                    player.x < p.x + p.width &&
-                    player.x + player.width > p.x &&
-                    player.y < p.y + p.height &&
-                    player.y + player.height > p.y
-                ) {
-                    if (player.vy > 0) { 
-                        player.y = p.y - player.height;
-                        player.vy = 0;
-                        player.grounded = true;
-                    } else if (player.vy < 0) { 
-                        player.y = p.y + p.height;
-                        player.vy = 0;
+                // Horizontal Collisions
+                for (let p of platforms) {
+                    if (
+                        player.x < p.x + p.width &&
+                        player.x + player.width > p.x &&
+                        player.y < p.y + p.height &&
+                        player.y + player.height > p.y
+                    ) {
+                        if (player.vx > 0) player.x = p.x - player.width;
+                        if (player.vx < 0) player.x = p.x + player.width;
                     }
                 }
-            }
 
-            // Green Fake Platforms check (Disappears only if player touches it AND is holding Left/Right movement)
-            for (let i = fakePlatforms.length - 1; i >= 0; i--) {
-                let fp = fakePlatforms[i];
-                if (
-                    player.x < fp.x + fp.width &&
-                    player.x + player.width > fp.x &&
-                    player.y + player.height >= fp.y &&
-                    player.y + player.height <= fp.y + 10 &&
-                    player.vy >= 0
-                ) {
-                    // Only collapse if moving horizontally
-                    if (isMovingHorizontal) {
-                        fakePlatforms.splice(i, 1);
-                        triggerShake(10, 3);
-                    } else {
-                        // Safe to stand if standing still
-                        player.y = fp.y - player.height;
-                        player.vy = 0;
-                        player.grounded = true;
-                    }
-                }
-            }
-
-            // Jump Action
-            if ((keys["ArrowUp"] || keys["KeyW"] || keys["Space"]) && player.grounded) {
-                player.vy = player.jumpForce;
+                // Vertical Movement
+                player.vy += player.gravity;
+                player.y += player.vy;
                 player.grounded = false;
-            }
 
-            // Hazard Collisions
-            for (let h of hazards) {
+                // Vertical Collisions with solid platforms
+                for (let p of platforms) {
+                    if (
+                        player.x < p.x + p.width &&
+                        player.x + player.width > p.x &&
+                        player.y < p.y + p.height &&
+                        player.y + player.height > p.y
+                    ) {
+                        if (player.vy > 0) { 
+                            player.y = p.y - player.height;
+                            player.vy = 0;
+                            player.grounded = true;
+                        } else if (player.vy < 0) { 
+                            player.y = p.y + p.height;
+                            player.vy = 0;
+                        }
+                    }
+                }
+
+                // Green Fake Platforms check
+                for (let i = fakePlatforms.length - 1; i >= 0; i--) {
+                    let fp = fakePlatforms[i];
+                    if (
+                        player.x < fp.x + fp.width &&
+                        player.x + player.width > fp.x &&
+                        player.y + player.height >= fp.y &&
+                        player.y + player.height <= fp.y + 10 &&
+                        player.vy >= 0
+                    ) {
+                        if (isMovingHorizontal) {
+                            fakePlatforms.splice(i, 1);
+                            triggerShake(10, 3);
+                        } else {
+                            player.y = fp.y - player.height;
+                            player.vy = 0;
+                            player.grounded = true;
+                        }
+                    }
+                }
+
+                // Jump Action
+                if ((keys["ArrowUp"] || keys["KeyW"] || keys["Space"]) && player.grounded) {
+                    player.vy = player.jumpForce;
+                    player.grounded = false;
+                }
+
+                // Hazard Collisions
+                for (let h of hazards) {
+                    if (
+                        player.x < h.x + h.width &&
+                        player.x + player.width > h.x &&
+                        player.y < h.y + h.height &&
+                        player.y + player.height > h.y
+                    ) {
+                        resetPlayer();
+                    }
+                }
+
+                // Moving Hazards Collisions
+                for (let mh of movingHazards) {
+                    mh.y += mh.speed * mh.dir;
+                    if (mh.y < mh.startY || mh.y > mh.endY) mh.dir *= -1;
+
+                    let distX = Math.abs(player.x + player.width / 2 - mh.x);
+                    let distY = Math.abs(player.y + player.height / 2 - mh.y);
+
+                    if (distX < mh.radius + player.width / 2 && distY < mh.radius + player.height / 2) {
+                        resetPlayer();
+                    }
+                }
+
+                // Fall check
+                if (player.y > canvas.height + 50) {
+                    resetPlayer();
+                }
+
+                // Goal Collision Check -> Initiate Smooth Transition
                 if (
-                    player.x < h.x + h.width &&
-                    player.x + player.width > h.x &&
-                    player.y < h.y + h.height &&
-                    player.y + player.height > h.y
+                    player.x < goal.x + goal.width &&
+                    player.x + player.width > goal.x &&
+                    player.y < goal.y + goal.height &&
+                    player.y + player.height > goal.y
                 ) {
-                    resetPlayer();
+                    gameState = STATE.TRANSITION;
+                    difficultyLevel++;
+                    triggerShake(15, 3);
+
+                    // Isolate old platforms except the end/goal platform support (last platform)
+                    let endPlatform = platforms[platforms.length - 1];
+                    transitionQueue = platforms.slice(0, platforms.length - 1);
+                    platforms = [endPlatform]; // Keep end platform as foundation
+                    hazards = []; // Clear current hazards
+                    fakePlatforms = [];
+                    movingHazards = [];
+                    transitionTimer = 0;
+                }
+            } else if (gameState === STATE.TRANSITION) {
+                // Smoothly remove old platforms one by one
+                transitionTimer++;
+                if (transitionTimer % 4 === 0 && transitionQueue.length > 0) {
+                    transitionQueue.shift(); // Remove one old platform sequentially from the left
+                }
+
+                if (transitionQueue.length === 0) {
+                    // Once old platforms are cleared, generate the next segment forward from the end platform
+                    let lastPlatform = platforms[platforms.length - 1];
+                    generateChunk(lastPlatform.x + lastPlatform.width);
+                    gameState = STATE.PLAYING;
                 }
             }
 
-            // Moving Hazards Collisions
-            for (let mh of movingHazards) {
-                mh.y += mh.speed * mh.dir;
-                if (mh.y < mh.startY || mh.y > mh.endY) mh.dir *= -1;
-
-                let distX = Math.abs(player.x + player.width / 2 - mh.x);
-                let distY = Math.abs(player.y + player.height / 2 - mh.y);
-
-                if (distX < mh.radius + player.width / 2 && distY < mh.radius + player.height / 2) {
-                    resetPlayer();
-                }
-            }
-
-            // Fall check
-            if (player.y > canvas.height + 50) {
-                resetPlayer();
-            }
-
-            // Goal Collision Check
-            if (
-                player.x < goal.x + goal.width &&
-                player.x + player.width > goal.x &&
-                player.y < goal.y + goal.height &&
-                player.y + player.height > goal.y
-            ) {
-                if (currentLevel < 5) {
-                    currentLevel++;
-                    generateLevel(currentLevel);
-                    triggerShake(20, 4);
-                } else {
-                    gameState = STATE.VICTORY;
-                }
-            }
-
-            uiLevel.innerText = `Level: ${currentLevel}/5`;
+            uiProgress.innerText = `Distance: ${Math.floor(player.x)}m`;
             uiDeaths.innerText = `Deaths: ${totalDeaths}`;
         }
 
@@ -388,20 +506,6 @@
                 return;
             }
 
-            if (gameState === STATE.VICTORY) {
-                ctx.fillStyle = "#33ff66";
-                ctx.font = "bold 32px sans-serif";
-                ctx.textAlign = "center";
-                ctx.fillText("YOU BEAT THE TROLL GAME!", canvas.width / 2, canvas.height / 2 - 40);
-                
-                ctx.fillStyle = "#fff";
-                ctx.font = "18px sans-serif";
-                ctx.fillText(`Total Deaths Suffered: ${totalDeaths}`, canvas.width / 2, canvas.height / 2 + 10);
-                ctx.fillText("Press SPACE to Play Again", canvas.width / 2, canvas.height / 2 + 50);
-                ctx.restore();
-                return;
-            }
-
             let cameraX = player.x - 200;
             if (cameraX < 0) cameraX = 0;
 
@@ -411,11 +515,19 @@
             // Background Grid Lines
             ctx.strokeStyle = "#222";
             ctx.lineWidth = 1;
-            for (let i = 0; i < 3000; i += 100) {
+            for (let i = 0; i < player.x + 2000; i += 100) {
                 ctx.beginPath();
                 ctx.moveTo(i, 0);
                 ctx.lineTo(i, canvas.height);
                 ctx.stroke();
+            }
+
+            // Draw Transitioning/Old Platforms being cleared one by one
+            for (let p of transitionQueue) {
+                ctx.fillStyle = "#444";
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+                ctx.strokeStyle = "#ff3333";
+                ctx.strokeRect(p.x, p.y, p.width, p.height);
             }
 
             // Solid Platforms
@@ -424,21 +536,29 @@
                 ctx.fillRect(p.x, p.y, p.width, p.height);
                 ctx.strokeStyle = "#222";
                 ctx.strokeRect(p.x, p.y, p.width, p.height);
+                if (settings.showHitboxes) {
+                    ctx.strokeStyle = "#00ff00";
+                    ctx.strokeRect(p.x, p.y, p.width, p.height);
+                }
             }
 
-            // Green Fake Platforms (Disappears on movement touch)
+            // Green Fake Platforms
             for (let fp of fakePlatforms) {
-                ctx.fillStyle = "#2ecc71"; // Changed to green
+                ctx.fillStyle = "#2ecc71";
                 ctx.fillRect(fp.x, fp.y, fp.width, fp.height);
                 ctx.strokeStyle = "#27ae60";
                 ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
+                if (settings.showHitboxes) {
+                    ctx.strokeStyle = "#00ff00";
+                    ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
+                }
             }
 
-            // Smaller Spikes
+            // Spikes
             ctx.fillStyle = "#ff2222";
             for (let h of hazards) {
                 ctx.beginPath();
-                let spikeWidth = 8; // Narrower spikes
+                let spikeWidth = 8;
                 let count = Math.floor(h.width / spikeWidth);
                 for (let i = 0; i < count; i++) {
                     let sx = h.x + (i * spikeWidth);
@@ -447,6 +567,10 @@
                     ctx.lineTo(sx + spikeWidth, h.y + h.height);
                 }
                 ctx.fill();
+                if (settings.showHitboxes) {
+                    ctx.strokeStyle = "#00ff00";
+                    ctx.strokeRect(h.x, h.y, h.width, h.height);
+                }
             }
 
             // Moving Hazards (Saws)
@@ -463,14 +587,27 @@
                 ctx.beginPath();
                 ctx.arc(mh.x, mh.y, 4, 0, Math.PI * 2);
                 ctx.fill();
+
+                if (settings.showHitboxes) {
+                    ctx.strokeStyle = "#00ff00";
+                    ctx.beginPath();
+                    ctx.arc(mh.x, mh.y, mh.radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
             }
 
             // Goal
-            ctx.fillStyle = "#33ccff";
-            ctx.fillRect(goal.x, goal.y, goal.width, goal.height);
-            ctx.fillStyle = "#ffffff";
-            ctx.font = "10px sans-serif";
-            ctx.fillText("EXIT", goal.x + 3, goal.y + 35);
+            if (gameState === STATE.PLAYING) {
+                ctx.fillStyle = "#33ccff";
+                ctx.fillRect(goal.x, goal.y, goal.width, goal.height);
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "10px sans-serif";
+                ctx.fillText("EXIT", goal.x + 3, goal.y + 35);
+                if (settings.showHitboxes) {
+                    ctx.strokeStyle = "#00ff00";
+                    ctx.strokeRect(goal.x, goal.y, goal.width, goal.height);
+                }
+            }
 
             // Player
             ctx.fillStyle = player.color;
@@ -478,6 +615,12 @@
             ctx.strokeStyle = "#000";
             ctx.lineWidth = 2;
             ctx.strokeRect(player.x, player.y, player.width, player.height);
+
+            if (settings.showHitboxes) {
+                ctx.strokeStyle = "#00ff00";
+                ctx.lineWidth = 1;
+                ctx.strokeRect(player.x, player.y, player.width, player.height);
+            }
 
             ctx.restore();
             ctx.restore();
