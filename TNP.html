@@ -86,7 +86,7 @@
         let totalDeaths = 0;
         let currentSeedVal = 0;
 
-        // Player Object (Physics calibrated to max jump reach limits)
+        // Player Object
         let player = {
             x: 50,
             y: 300,
@@ -129,7 +129,6 @@
             player.vx = 0;
             player.vy = 0;
 
-            // Generate deterministic seed value
             currentSeedVal = Math.floor(Math.random() * 899999 + 100000);
             let seed = currentSeedVal;
             
@@ -145,21 +144,15 @@
             let lastY = 380;
             let totalLength = 1200 + (levelNum * 350);
 
-            // Maximum jump physics thresholds calculated from player parameters:
-            // Max horizontal jump distance approx ~130-140 pixels at speed 4.5
             const maxJumpDistance = 110; 
             const maxVerticalStep = 95;
 
             while (currentX < totalLength - 150) {
-                // Strict bounds checking ensures platforms are always reachable
                 let gap = 50 + random() * (maxJumpDistance - 50);
                 let platWidth = 80 + random() * 70;
-                
-                // Height change constrained by jump capabilities
                 let heightDelta = (random() - 0.5) * (maxVerticalStep * 1.5);
                 let platY = lastY + heightDelta;
 
-                // Restrict boundaries inside screen vertical frames
                 if (platY < 130) platY = 130;
                 if (platY > 380) platY = 380;
 
@@ -170,17 +163,15 @@
                 } else {
                     platforms.push({ x: currentX + gap, y: platY, width: platWidth, height: 20, color: "#666" });
 
-                    // Safe spacing for spikes so a clear landing path always exists
                     if (random() < 0.35 && levelNum > 1 && platWidth > 100) {
                         hazards.push({
                             x: currentX + gap + 15,
-                            y: platY - 12,
+                            y: platY - 8, // Adjusted for smaller height
                             width: platWidth - 30,
-                            height: 12
+                            height: 8    // Smaller spikes height (8px instead of 12px)
                         });
                     }
 
-                    // Floating Hazards (Saws) placed safely clear of mandatory jump arcs
                     if (random() < 0.25 && levelNum > 2) {
                         movingHazards.push({
                             x: currentX + gap - gap / 2,
@@ -198,13 +189,9 @@
                 lastY = platY;
             }
 
-            // Goal destination destination anchor
             goal = { x: totalLength - 60, y: 320, width: 30, height: 60 };
-
-            // Guaranteed stable end platform
             platforms.push({ x: totalLength - 120, y: 380, width: 220, height: 70, color: "#444" });
 
-            // Update UI Seed String
             uiSeed.innerText = `Seed: TNP-${currentSeedVal}`;
         }
 
@@ -250,6 +237,9 @@
         function update() {
             if (gameState !== STATE.PLAYING) return;
 
+            // Check if player is holding horizontal movement keys
+            let isMovingHorizontal = keys["ArrowLeft"] || keys["KeyA"] || keys["ArrowRight"] || keys["KeyD"];
+
             // Horizontal Movement
             player.vx = 0;
             if (keys["ArrowLeft"] || keys["KeyA"]) player.vx = -player.speed;
@@ -266,7 +256,7 @@
                     player.y + player.height > p.y
                 ) {
                     if (player.vx > 0) player.x = p.x - player.width;
-                    if (player.vx < 0) player.x = p.x + p.width;
+                    if (player.vx < 0) player.x = p.x + player.width;
                 }
             }
 
@@ -275,7 +265,7 @@
             player.y += player.vy;
             player.grounded = false;
 
-            // Vertical Collisions
+            // Vertical Collisions with solid platforms
             for (let p of platforms) {
                 if (
                     player.x < p.x + p.width &&
@@ -294,7 +284,7 @@
                 }
             }
 
-            // Fake Platforms check
+            // Green Fake Platforms check (Disappears only if player touches it AND is holding Left/Right movement)
             for (let i = fakePlatforms.length - 1; i >= 0; i--) {
                 let fp = fakePlatforms[i];
                 if (
@@ -304,8 +294,16 @@
                     player.y + player.height <= fp.y + 10 &&
                     player.vy >= 0
                 ) {
-                    fakePlatforms.splice(i, 1);
-                    triggerShake(10, 3);
+                    // Only collapse if moving horizontally
+                    if (isMovingHorizontal) {
+                        fakePlatforms.splice(i, 1);
+                        triggerShake(10, 3);
+                    } else {
+                        // Safe to stand if standing still
+                        player.y = fp.y - player.height;
+                        player.vy = 0;
+                        player.grounded = true;
+                    }
                 }
             }
 
@@ -361,7 +359,6 @@
                 }
             }
 
-            // UI Updates
             uiLevel.innerText = `Level: ${currentLevel}/5`;
             uiDeaths.innerText = `Deaths: ${totalDeaths}`;
         }
@@ -429,19 +426,19 @@
                 ctx.strokeRect(p.x, p.y, p.width, p.height);
             }
 
-            // Fake Platforms
+            // Green Fake Platforms (Disappears on movement touch)
             for (let fp of fakePlatforms) {
-                ctx.fillStyle = "#666";
+                ctx.fillStyle = "#2ecc71"; // Changed to green
                 ctx.fillRect(fp.x, fp.y, fp.width, fp.height);
-                ctx.strokeStyle = "#222";
+                ctx.strokeStyle = "#27ae60";
                 ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
             }
 
-            // Spikes
+            // Smaller Spikes
             ctx.fillStyle = "#ff2222";
             for (let h of hazards) {
                 ctx.beginPath();
-                let spikeWidth = 12;
+                let spikeWidth = 8; // Narrower spikes
                 let count = Math.floor(h.width / spikeWidth);
                 for (let i = 0; i < count; i++) {
                     let sx = h.x + (i * spikeWidth);
