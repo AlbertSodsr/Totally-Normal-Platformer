@@ -66,7 +66,7 @@
         .settings-btn:hover {
             background: #444;
         }
-        .settings-menu {
+        .settings-menu, .dialog-box {
             position: absolute;
             top: 50%;
             left: 50%;
@@ -79,8 +79,9 @@
             display: none;
             z-index: 20;
             box-shadow: 0 0 15px rgba(0,0,0,0.8);
+            max-width: 400px;
         }
-        .settings-menu h2 {
+        .settings-menu h2, .dialog-box h2 {
             margin-top: 0;
             color: #ff3366;
         }
@@ -90,7 +91,7 @@
             cursor: pointer;
             font-size: 16px;
         }
-        .settings-menu button {
+        .settings-menu button, .dialog-box button {
             background: #ff3366;
             color: white;
             border: none;
@@ -99,9 +100,15 @@
             cursor: pointer;
             border-radius: 4px;
             margin-top: 10px;
+            margin-right: 5px;
         }
-        .settings-menu button:hover {
+        .settings-menu button:hover, .dialog-box button:hover {
             background: #e02e5b;
+        }
+        .dialog-box p {
+            color: #ddd;
+            font-size: 15px;
+            line-height: 1.4;
         }
         .instructions {
             margin-top: 10px;
@@ -126,8 +133,18 @@
             <label>
                 <input type="checkbox" id="hitboxToggle"> Show Hitboxes
             </label>
+            <label>
+                <input type="checkbox" id="easyModeToggle"> Easy Mode (For the weak)
+            </label>
             <br>
             <button id="closeSettings">Resume Game</button>
+        </div>
+
+        <div class="dialog-box" id="dialogBox">
+            <h2>Are you sure about that?</h2>
+            <p id="mockeryText">Really? Turning on Easy Mode? Do you need a safety blanket and a pacifier too? Fine, click confirm if your fingers are too tired to jump properly.</p>
+            <button id="confirmEasy">Yes, I am bad</button>
+            <button id="cancelEasy">No, take me back!</button>
         </div>
 
         <canvas id="gameCanvas" width="800" height="450"></canvas>
@@ -146,9 +163,14 @@
         const settingsMenu = document.getElementById("settingsMenu");
         const closeSettingsBtn = document.getElementById("closeSettings");
         const hitboxToggle = document.getElementById("hitboxToggle");
+        const easyModeToggle = document.getElementById("easyModeToggle");
+        const dialogBox = document.getElementById("dialogBox");
+        const mockeryText = document.getElementById("mockeryText");
+        const confirmEasy = document.getElementById("confirmEasy");
+        const cancelEasy = document.getElementById("cancelEasy");
 
         // Game States
-        const STATE = { START: 0, PLAYING: 1, TRANSITION: 2, VICTORY: 3, SETTINGS: 4 };
+        const STATE = { START: 0, PLAYING: 1, TRANSITION: 2, VICTORY: 3, SETTINGS: 4, DIALOG: 5, LOADING: 6 };
         let gameState = STATE.START;
         let previousState = STATE.PLAYING;
 
@@ -158,8 +180,13 @@
 
         // Settings config
         let settings = {
-            showHitboxes: false
+            showHitboxes: false,
+            easyMode: false
         };
+
+        // Loading screen transition tracking
+        let loadingTimer = 0;
+        let loadingMessage = "";
 
         // Player Object
         let player = {
@@ -183,11 +210,9 @@
         let movingHazards = []; 
         let goal = {};
 
-        // Transition management variables
         let transitionQueue = [];
         let transitionTimer = 0;
 
-        // Screen Shake Effect
         let shakeTimer = 0;
         let shakeMagnitude = 0;
 
@@ -195,6 +220,19 @@
             shakeTimer = duration;
             shakeMagnitude = magnitude;
         }
+
+        const mockeryQuotes = [
+            "Really? Turning on Easy Mode? Do you need a safety blanket and a pacifier too? Fine, click confirm if your fingers are too tired to jump properly.",
+            "Oh look, someone couldn't handle a tiny jump! Want me to beat the game for you too, champ?",
+            "Easy mode activated? Bold choice for someone who probably dies on flat ground.",
+            "Ah, lowering the difficulty. Don't worry, your secret is safe with everyone who reads this code."
+        ];
+
+        const disableQuotes = [
+            "Turning Easy Mode OFF? Look who decided to grow a backbone! Good luck out there.",
+            "Removing training wheels. Try not to cry when you hit the first spike.",
+            "Back to hard mode? Respectable. Let's see how long you survive."
+        ];
 
         // Initialize / Generate World Chunk
         function generateChunk(startX, isInitial = false) {
@@ -218,7 +256,6 @@
                 return x - Math.floor(x);
             }
 
-            // Starting base platform for this chunk
             if (isInitial) {
                 platforms.push({ x: 0, y: 380, width: 160, height: 70, color: "#444" });
             }
@@ -242,7 +279,14 @@
                 let isFake = (random() < 0.22 && difficultyLevel > 1);
 
                 if (isFake) {
-                    fakePlatforms.push({ x: currentX + gap, y: platY, width: platWidth, height: 20 });
+                    fakePlatforms.push({ 
+                        x: currentX + gap, 
+                        y: platY, 
+                        width: platWidth, 
+                        height: 20,
+                        state: 'normal', 
+                        fadeTimer: 0 
+                    });
                 } else {
                     platforms.push({ x: currentX + gap, y: platY, width: platWidth, height: 20, color: "#666" });
 
@@ -272,13 +316,25 @@
                 lastY = platY;
             }
 
-            // Goal destination anchor
             goal = { x: currentX + 50, y: 320, width: 30, height: 60 };
-            // End platform support
             platforms.push({ x: currentX, y: 380, width: 220, height: 70, color: "#444" });
         }
 
-        // Settings Menu UI Handlers
+        // Trigger loading screen reset sequence
+        function triggerLoadingScreen(enable) {
+            settings.easyMode = enable;
+            easyModeToggle.checked = enable;
+            
+            let quoteList = enable ? mockeryQuotes : disableQuotes;
+            loadingMessage = quoteList[Math.floor(Math.random() * quoteList.length)];
+            
+            settingsMenu.style.display = "none";
+            dialogBox.style.display = "none";
+            gameState = STATE.LOADING;
+            loadingTimer = 120;
+        }
+
+        // Settings and Dialog UI Handlers
         function toggleSettings() {
             if (gameState === STATE.SETTINGS) {
                 gameState = previousState;
@@ -292,8 +348,34 @@
 
         settingsBtn.addEventListener("click", toggleSettings);
         closeSettingsBtn.addEventListener("click", toggleSettings);
+        
         hitboxToggle.addEventListener("change", (e) => {
             settings.showHitboxes = e.target.checked;
+        });
+
+        easyModeToggle.addEventListener("click", (e) => {
+            e.preventDefault();
+
+            if (!settings.easyMode) {
+                let randomQuote = mockeryQuotes[Math.floor(Math.random() * mockeryQuotes.length)];
+                mockeryText.innerText = randomQuote;
+                settingsMenu.style.display = "none";
+                dialogBox.style.display = "block";
+                previousState = gameState;
+                gameState = STATE.DIALOG;
+            } else {
+                triggerLoadingScreen(false);
+            }
+        });
+
+        confirmEasy.addEventListener("click", () => {
+            triggerLoadingScreen(true);
+        });
+
+        cancelEasy.addEventListener("click", () => {
+            dialogBox.style.display = "none";
+            settingsMenu.style.display = "block";
+            gameState = STATE.SETTINGS;
         });
 
         // Input Listeners
@@ -301,11 +383,13 @@
             keys[e.code] = true;
 
             if (e.code === "Escape") {
-                toggleSettings();
+                if (gameState === STATE.PLAYING || gameState === STATE.SETTINGS) {
+                    toggleSettings();
+                }
                 return;
             }
 
-            if (e.code === "KeyR" && gameState !== STATE.SETTINGS) {
+            if (e.code === "KeyR" && gameState !== STATE.SETTINGS && gameState !== STATE.DIALOG && gameState !== STATE.LOADING) {
                 if (gameState === STATE.PLAYING || gameState === STATE.GAME_OVER) {
                     totalDeaths++;
                     triggerShake(15, 5);
@@ -336,19 +420,27 @@
 
         // Game Loop Update
         function update() {
+            if (gameState === STATE.LOADING) {
+                loadingTimer--;
+                if (loadingTimer <= 0) {
+                    difficultyLevel = 1;
+                    generateChunk(160, true);
+                    gameState = STATE.PLAYING;
+                }
+                return;
+            }
+
             if (gameState !== STATE.PLAYING && gameState !== STATE.TRANSITION) return;
 
             let isMovingHorizontal = keys["ArrowLeft"] || keys["KeyA"] || keys["ArrowRight"] || keys["KeyD"];
 
             if (gameState === STATE.PLAYING) {
-                // Horizontal Movement
                 player.vx = 0;
                 if (keys["ArrowLeft"] || keys["KeyA"]) player.vx = -player.speed;
                 if (keys["ArrowRight"] || keys["KeyD"]) player.vx = player.speed;
 
                 player.x += player.vx;
 
-                // Horizontal Collisions
                 for (let p of platforms) {
                     if (
                         player.x < p.x + p.width &&
@@ -361,12 +453,10 @@
                     }
                 }
 
-                // Vertical Movement
                 player.vy += player.gravity;
                 player.y += player.vy;
                 player.grounded = false;
 
-                // Vertical Collisions with solid platforms
                 for (let p of platforms) {
                     if (
                         player.x < p.x + p.width &&
@@ -385,10 +475,21 @@
                     }
                 }
 
-                // Green Fake Platforms check
                 for (let i = fakePlatforms.length - 1; i >= 0; i--) {
                     let fp = fakePlatforms[i];
+                    
+                    // Determine if collision applies based on Easy Mode rules:
+                    // In Easy Mode, the susform hitbox stays active until it disappears completely during fading.
+                    // In Hard/Normal Mode, hitting a moving key immediately invalidates/removes collision.
+                    let hasCollision = false;
+                    if (fp.state === 'normal') {
+                        hasCollision = true;
+                    } else if (fp.state === 'fading' && settings.easyMode) {
+                        hasCollision = true; // Hitbox stays active during fade in Easy Mode
+                    }
+
                     if (
+                        hasCollision &&
                         player.x < fp.x + fp.width &&
                         player.x + player.width > fp.x &&
                         player.y + player.height >= fp.y &&
@@ -396,27 +497,48 @@
                         player.vy >= 0
                     ) {
                         if (isMovingHorizontal) {
-                            fakePlatforms.splice(i, 1);
-                            triggerShake(10, 3);
+                            if (fp.state === 'normal') {
+                                fp.state = 'fading';
+                                fp.fadeTimer = 30; 
+                            }
                         } else {
+                            if (fp.state === 'fading' && !settings.easyMode) {
+                                fp.state = 'normal';
+                                fp.fadeTimer = 0;
+                            }
                             player.y = fp.y - player.height;
                             player.vy = 0;
                             player.grounded = true;
                         }
                     }
+
+                    if (fp.state === 'fading') {
+                        fp.fadeTimer--;
+                        if (fp.fadeTimer <= 0) {
+                            fakePlatforms.splice(i, 1);
+                            triggerShake(10, 3);
+                        }
+                    }
                 }
 
-                // Jump Action
                 if ((keys["ArrowUp"] || keys["KeyW"] || keys["Space"]) && player.grounded) {
                     player.vy = player.jumpForce;
                     player.grounded = false;
                 }
 
-                // Hazard Collisions
+                // Hazard Collisions with dynamic hitbox adjustment for Easy Mode
                 for (let h of hazards) {
+                    let activeHazardX = h.x;
+                    let activeHazardWidth = h.width;
+
+                    if (settings.easyMode) {
+                        // Easy mode shrinks spike hitbox to half, aligned to the left half
+                        activeHazardWidth = h.width * 0.5;
+                    }
+
                     if (
-                        player.x < h.x + h.width &&
-                        player.x + player.width > h.x &&
+                        player.x < activeHazardX + activeHazardWidth &&
+                        player.x + player.width > activeHazardX &&
                         player.y < h.y + h.height &&
                         player.y + player.height > h.y
                     ) {
@@ -424,7 +546,6 @@
                     }
                 }
 
-                // Moving Hazards Collisions
                 for (let mh of movingHazards) {
                     mh.y += mh.speed * mh.dir;
                     if (mh.y < mh.startY || mh.y > mh.endY) mh.dir *= -1;
@@ -437,12 +558,10 @@
                     }
                 }
 
-                // Fall check
                 if (player.y > canvas.height + 50) {
                     resetPlayer();
                 }
 
-                // Goal Collision Check -> Initiate Smooth Transition
                 if (
                     player.x < goal.x + goal.width &&
                     player.x + player.width > goal.x &&
@@ -453,24 +572,21 @@
                     difficultyLevel++;
                     triggerShake(15, 3);
 
-                    // Isolate old platforms except the end/goal platform support (last platform)
                     let endPlatform = platforms[platforms.length - 1];
                     transitionQueue = platforms.slice(0, platforms.length - 1);
-                    platforms = [endPlatform]; // Keep end platform as foundation
-                    hazards = []; // Clear current hazards
+                    platforms = [endPlatform]; 
+                    hazards = []; 
                     fakePlatforms = [];
                     movingHazards = [];
                     transitionTimer = 0;
                 }
             } else if (gameState === STATE.TRANSITION) {
-                // Smoothly remove old platforms one by one
                 transitionTimer++;
                 if (transitionTimer % 4 === 0 && transitionQueue.length > 0) {
-                    transitionQueue.shift(); // Remove one old platform sequentially from the left
+                    transitionQueue.shift(); 
                 }
 
                 if (transitionQueue.length === 0) {
-                    // Once old platforms are cleared, generate the next segment forward from the end platform
                     let lastPlatform = platforms[platforms.length - 1];
                     generateChunk(lastPlatform.x + lastPlatform.width);
                     gameState = STATE.PLAYING;
@@ -484,6 +600,28 @@
         // Render Graphics
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState === STATE.LOADING) {
+                ctx.fillStyle = "#111";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = "#ff3366";
+                ctx.font = "bold 26px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("APPLYING DIFFICULTY SETTINGS...", canvas.width / 2, canvas.height / 2 - 50);
+
+                ctx.fillStyle = "#fff";
+                ctx.font = "16px sans-serif";
+                ctx.fillText(`"${loadingMessage}"`, canvas.width / 2, canvas.height / 2 + 10);
+                
+                ctx.fillStyle = "#333";
+                ctx.fillRect(canvas.width / 2 - 150, canvas.height / 2 + 50, 300, 10);
+                ctx.fillStyle = "#ff3366";
+                let progressWidth = ((120 - loadingTimer) / 120) * 300;
+                ctx.fillRect(canvas.width / 2 - 150, canvas.height / 2 + 50, progressWidth, 10);
+
+                return;
+            }
 
             ctx.save();
             if (shakeTimer > 0) {
@@ -512,7 +650,6 @@
             ctx.save();
             ctx.translate(-cameraX, 0);
 
-            // Background Grid Lines
             ctx.strokeStyle = "#222";
             ctx.lineWidth = 1;
             for (let i = 0; i < player.x + 2000; i += 100) {
@@ -522,7 +659,6 @@
                 ctx.stroke();
             }
 
-            // Draw Transitioning/Old Platforms being cleared one by one
             for (let p of transitionQueue) {
                 ctx.fillStyle = "#444";
                 ctx.fillRect(p.x, p.y, p.width, p.height);
@@ -530,7 +666,6 @@
                 ctx.strokeRect(p.x, p.y, p.width, p.height);
             }
 
-            // Solid Platforms
             for (let p of platforms) {
                 ctx.fillStyle = p.color;
                 ctx.fillRect(p.x, p.y, p.width, p.height);
@@ -542,24 +677,34 @@
                 }
             }
 
-            // Green Fake Platforms
             for (let fp of fakePlatforms) {
-                ctx.fillStyle = "#2ecc71";
+                if (fp.state === 'fading') {
+                    let ratio = fp.fadeTimer / 30;
+                    ctx.fillStyle = ratio > 0.5 ? "#e67e22" : "#e74c3c";
+                } else {
+                    ctx.fillStyle = "#2ecc71";
+                }
                 ctx.fillRect(fp.x, fp.y, fp.width, fp.height);
                 ctx.strokeStyle = "#27ae60";
                 ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
+
                 if (settings.showHitboxes) {
                     ctx.strokeStyle = "#00ff00";
                     ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
                 }
             }
 
-            // Spikes
+            // Spikes and dynamic hitbox outline rendering
             ctx.fillStyle = "#ff2222";
             for (let h of hazards) {
                 ctx.beginPath();
                 let spikeWidth = 8;
                 let count = Math.floor(h.width / spikeWidth);
+                
+                if (settings.easyMode) {
+                    count = Math.floor(count * 0.5); // Half the original spike amount
+                }
+
                 for (let i = 0; i < count; i++) {
                     let sx = h.x + (i * spikeWidth);
                     ctx.moveTo(sx, h.y + h.height);
@@ -567,13 +712,14 @@
                     ctx.lineTo(sx + spikeWidth, h.y + h.height);
                 }
                 ctx.fill();
+
                 if (settings.showHitboxes) {
                     ctx.strokeStyle = "#00ff00";
-                    ctx.strokeRect(h.x, h.y, h.width, h.height);
+                    let hitboxW = settings.easyMode ? h.width * 0.5 : h.width;
+                    ctx.strokeRect(h.x, h.y, hitboxW, h.height);
                 }
             }
 
-            // Moving Hazards (Saws)
             for (let mh of movingHazards) {
                 ctx.fillStyle = "#ffcc00";
                 ctx.beginPath();
@@ -596,7 +742,6 @@
                 }
             }
 
-            // Goal
             if (gameState === STATE.PLAYING) {
                 ctx.fillStyle = "#33ccff";
                 ctx.fillRect(goal.x, goal.y, goal.width, goal.height);
@@ -609,7 +754,6 @@
                 }
             }
 
-            // Player
             ctx.fillStyle = player.color;
             ctx.fillRect(player.x, player.y, player.width, player.height);
             ctx.strokeStyle = "#000";
