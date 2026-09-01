@@ -331,7 +331,7 @@
             settingsMenu.style.display = "none";
             dialogBox.style.display = "none";
             gameState = STATE.LOADING;
-            loadingTimer = 120;
+            loadingTimer = 120; 
         }
 
         // Settings and Dialog UI Handlers
@@ -418,6 +418,16 @@
             generateChunk(160, true);
         }
 
+        function getHazardBounds(h) {
+            let spikeWidth = 8;
+            let count = Math.floor(h.width / spikeWidth);
+            if (settings.easyMode) {
+                count = Math.floor(count * 0.5);
+            }
+            let activeWidth = count * spikeWidth;
+            return { x: h.x, y: h.y, width: activeWidth, height: h.height };
+        }
+
         // Game Loop Update
         function update() {
             if (gameState === STATE.LOADING) {
@@ -475,21 +485,14 @@
                     }
                 }
 
+                // Susforms Check: Easy Mode keeps the collision solid until the 0.5s fade completes
                 for (let i = fakePlatforms.length - 1; i >= 0; i--) {
                     let fp = fakePlatforms[i];
                     
-                    // Determine if collision applies based on Easy Mode rules:
-                    // In Easy Mode, the susform hitbox stays active until it disappears completely during fading.
-                    // In Hard/Normal Mode, hitting a moving key immediately invalidates/removes collision.
-                    let hasCollision = false;
-                    if (fp.state === 'normal') {
-                        hasCollision = true;
-                    } else if (fp.state === 'fading' && settings.easyMode) {
-                        hasCollision = true; // Hitbox stays active during fade in Easy Mode
-                    }
+                    let canCollide = settings.easyMode ? true : (fp.state === 'normal');
 
                     if (
-                        hasCollision &&
+                        canCollide &&
                         player.x < fp.x + fp.width &&
                         player.x + player.width > fp.x &&
                         player.y + player.height >= fp.y &&
@@ -499,7 +502,7 @@
                         if (isMovingHorizontal) {
                             if (fp.state === 'normal') {
                                 fp.state = 'fading';
-                                fp.fadeTimer = 30; 
+                                fp.fadeTimer = 30; // 0.5 seconds @ 60fps
                             }
                         } else {
                             if (fp.state === 'fading' && !settings.easyMode) {
@@ -526,21 +529,13 @@
                     player.grounded = false;
                 }
 
-                // Hazard Collisions with dynamic hitbox adjustment for Easy Mode
                 for (let h of hazards) {
-                    let activeHazardX = h.x;
-                    let activeHazardWidth = h.width;
-
-                    if (settings.easyMode) {
-                        // Easy mode shrinks spike hitbox to half, aligned to the left half
-                        activeHazardWidth = h.width * 0.5;
-                    }
-
+                    let hb = getHazardBounds(h);
                     if (
-                        player.x < activeHazardX + activeHazardWidth &&
-                        player.x + player.width > activeHazardX &&
-                        player.y < h.y + h.height &&
-                        player.y + player.height > h.y
+                        player.x < hb.x + hb.width &&
+                        player.x + player.width > hb.x &&
+                        player.y < hb.y + hb.height &&
+                        player.y + player.height > hb.y
                     ) {
                         resetPlayer();
                     }
@@ -689,12 +684,13 @@
                 ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
 
                 if (settings.showHitboxes) {
-                    ctx.strokeStyle = "#00ff00";
+                    // Show green active hitbox while readable by collision system
+                    let activeHitbox = settings.easyMode ? true : (fp.state === 'normal');
+                    ctx.strokeStyle = activeHitbox ? "#00ff00" : "#ff0000";
                     ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
                 }
             }
 
-            // Spikes and dynamic hitbox outline rendering
             ctx.fillStyle = "#ff2222";
             for (let h of hazards) {
                 ctx.beginPath();
@@ -702,7 +698,7 @@
                 let count = Math.floor(h.width / spikeWidth);
                 
                 if (settings.easyMode) {
-                    count = Math.floor(count * 0.5); // Half the original spike amount
+                    count = Math.floor(count * 0.5);
                 }
 
                 for (let i = 0; i < count; i++) {
@@ -714,9 +710,9 @@
                 ctx.fill();
 
                 if (settings.showHitboxes) {
+                    let hb = getHazardBounds(h);
                     ctx.strokeStyle = "#00ff00";
-                    let hitboxW = settings.easyMode ? h.width * 0.5 : h.width;
-                    ctx.strokeRect(h.x, h.y, hitboxW, h.height);
+                    ctx.strokeRect(hb.x, hb.y, hb.width, hb.height);
                 }
             }
 
