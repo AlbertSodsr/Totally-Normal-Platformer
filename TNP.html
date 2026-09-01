@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Totally normal platformer (TNP)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            flex-direction: column;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(255, 0, 0, 0.3);
+            border: 4px solid #333;
+        }
+        canvas {
+            display: block;
+            background-color: #1a1a1a;
+        }
+        .ui-overlay {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            right: 15px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            font-weight: bold;
+            pointer-events: none;
+            text-shadow: 2px 2px 0px #000;
+        }
+        .seed-display {
+            position: absolute;
+            bottom: 12px;
+            left: 15px;
+            font-size: 14px;
+            color: #aaa;
+            font-family: monospace;
+            pointer-events: none;
+            text-shadow: 1px 1px 0px #000;
+        }
+        .instructions {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #888;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div class="ui-overlay">
+            <span id="ui-level">Level: 1/5</span>
+            <span id="ui-deaths">Deaths: 0</span>
+        </div>
+        <div id="ui-seed" class="seed-display">Seed: --</div>
+        <canvas id="gameCanvas" width="800" height="450"></canvas>
+    </div>
+    <div class="instructions">Controls: A/D or Arrow Keys to Move | W or Space to Jump | R to Restart Level</div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // UI Elements
+        const uiLevel = document.getElementById("ui-level");
+        const uiDeaths = document.getElementById("ui-deaths");
+        const uiSeed = document.getElementById("ui-seed");
+
+        // Game States
+        const STATE = { START: 0, PLAYING: 1, LEVEL_CLEAR: 2, VICTORY: 3, GAME_OVER: 4 };
+        let gameState = STATE.START;
+
+        let currentLevel = 1;
+        let totalDeaths = 0;
+        let currentSeedVal = 0;
+
+        // Player Object (Physics calibrated to max jump reach limits)
+        let player = {
+            x: 50,
+            y: 300,
+            width: 24,
+            height: 24,
+            vx: 0,
+            vy: 0,
+            speed: 4.5,
+            jumpForce: -10.5,
+            gravity: 0.5,
+            grounded: false,
+            color: "#ff3366"
+        };
+
+        let keys = {};
+        let platforms = [];
+        let hazards = []; 
+        let fakePlatforms = []; 
+        let movingHazards = []; 
+        let goal = {};
+
+        // Screen Shake Effect
+        let shakeTimer = 0;
+        let shakeMagnitude = 0;
+
+        function triggerShake(duration, magnitude) {
+            shakeTimer = duration;
+            shakeMagnitude = magnitude;
+        }
+
+        // Guaranteed Solvable Procedural Generator
+        function generateLevel(levelNum) {
+            platforms = [];
+            hazards = [];
+            fakePlatforms = [];
+            movingHazards = [];
+
+            player.x = 50;
+            player.y = 300;
+            player.vx = 0;
+            player.vy = 0;
+
+            // Generate deterministic seed value
+            currentSeedVal = Math.floor(Math.random() * 899999 + 100000);
+            let seed = currentSeedVal;
+            
+            function random() {
+                let x = Math.sin(seed++) * 10000;
+                return x - Math.floor(x);
+            }
+
+            // Safe Starting Platform
+            platforms.push({ x: 0, y: 380, width: 160, height: 70, color: "#444" });
+
+            let currentX = 160;
+            let lastY = 380;
+            let totalLength = 1200 + (levelNum * 350);
+
+            // Maximum jump physics thresholds calculated from player parameters:
+            // Max horizontal jump distance approx ~130-140 pixels at speed 4.5
+            const maxJumpDistance = 110; 
+            const maxVerticalStep = 95;
+
+            while (currentX < totalLength - 150) {
+                // Strict bounds checking ensures platforms are always reachable
+                let gap = 50 + random() * (maxJumpDistance - 50);
+                let platWidth = 80 + random() * 70;
+                
+                // Height change constrained by jump capabilities
+                let heightDelta = (random() - 0.5) * (maxVerticalStep * 1.5);
+                let platY = lastY + heightDelta;
+
+                // Restrict boundaries inside screen vertical frames
+                if (platY < 130) platY = 130;
+                if (platY > 380) platY = 380;
+
+                let isFake = (random() < 0.2 && levelNum > 1);
+
+                if (isFake) {
+                    fakePlatforms.push({ x: currentX + gap, y: platY, width: platWidth, height: 20 });
+                } else {
+                    platforms.push({ x: currentX + gap, y: platY, width: platWidth, height: 20, color: "#666" });
+
+                    // Safe spacing for spikes so a clear landing path always exists
+                    if (random() < 0.35 && levelNum > 1 && platWidth > 100) {
+                        hazards.push({
+                            x: currentX + gap + 15,
+                            y: platY - 12,
+                            width: platWidth - 30,
+                            height: 12
+                        });
+                    }
+
+                    // Floating Hazards (Saws) placed safely clear of mandatory jump arcs
+                    if (random() < 0.25 && levelNum > 2) {
+                        movingHazards.push({
+                            x: currentX + gap - gap / 2,
+                            y: 160 + random() * 140,
+                            startY: 110,
+                            endY: 340,
+                            speed: 1.5 + levelNum * 0.3,
+                            dir: 1,
+                            radius: 11
+                        });
+                    }
+                }
+
+                currentX += gap + platWidth;
+                lastY = platY;
+            }
+
+            // Goal destination destination anchor
+            goal = { x: totalLength - 60, y: 320, width: 30, height: 60 };
+
+            // Guaranteed stable end platform
+            platforms.push({ x: totalLength - 120, y: 380, width: 220, height: 70, color: "#444" });
+
+            // Update UI Seed String
+            uiSeed.innerText = `Seed: TNP-${currentSeedVal}`;
+        }
+
+        // Input Listeners
+        window.addEventListener("keydown", (e) => {
+            keys[e.code] = true;
+
+            if (e.code === "KeyR") {
+                if (gameState === STATE.PLAYING || gameState === STATE.GAME_OVER) {
+                    totalDeaths++;
+                    triggerShake(15, 5);
+                    generateLevel(currentLevel);
+                    gameState = STATE.PLAYING;
+                }
+            }
+
+            if (gameState === STATE.START && (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW")) {
+                currentLevel = 1;
+                totalDeaths = 0;
+                generateLevel(currentLevel);
+                gameState = STATE.PLAYING;
+            }
+
+            if (gameState === STATE.VICTORY && (e.code === "Space" || e.code === "KeyR")) {
+                currentLevel = 1;
+                totalDeaths = 0;
+                generateLevel(currentLevel);
+                gameState = STATE.PLAYING;
+            }
+        });
+
+        window.addEventListener("keyup", (e) => {
+            keys[e.code] = false;
+        });
+
+        function resetPlayer() {
+            totalDeaths++;
+            triggerShake(20, 8);
+            generateLevel(currentLevel);
+        }
+
+        // Game Loop Update
+        function update() {
+            if (gameState !== STATE.PLAYING) return;
+
+            // Horizontal Movement
+            player.vx = 0;
+            if (keys["ArrowLeft"] || keys["KeyA"]) player.vx = -player.speed;
+            if (keys["ArrowRight"] || keys["KeyD"]) player.vx = player.speed;
+
+            player.x += player.vx;
+
+            // Horizontal Collisions
+            for (let p of platforms) {
+                if (
+                    player.x < p.x + p.width &&
+                    player.x + player.width > p.x &&
+                    player.y < p.y + p.height &&
+                    player.y + player.height > p.y
+                ) {
+                    if (player.vx > 0) player.x = p.x - player.width;
+                    if (player.vx < 0) player.x = p.x + p.width;
+                }
+            }
+
+            // Vertical Movement
+            player.vy += player.gravity;
+            player.y += player.vy;
+            player.grounded = false;
+
+            // Vertical Collisions
+            for (let p of platforms) {
+                if (
+                    player.x < p.x + p.width &&
+                    player.x + player.width > p.x &&
+                    player.y < p.y + p.height &&
+                    player.y + player.height > p.y
+                ) {
+                    if (player.vy > 0) { 
+                        player.y = p.y - player.height;
+                        player.vy = 0;
+                        player.grounded = true;
+                    } else if (player.vy < 0) { 
+                        player.y = p.y + p.height;
+                        player.vy = 0;
+                    }
+                }
+            }
+
+            // Fake Platforms check
+            for (let i = fakePlatforms.length - 1; i >= 0; i--) {
+                let fp = fakePlatforms[i];
+                if (
+                    player.x < fp.x + fp.width &&
+                    player.x + player.width > fp.x &&
+                    player.y + player.height >= fp.y &&
+                    player.y + player.height <= fp.y + 10 &&
+                    player.vy >= 0
+                ) {
+                    fakePlatforms.splice(i, 1);
+                    triggerShake(10, 3);
+                }
+            }
+
+            // Jump Action
+            if ((keys["ArrowUp"] || keys["KeyW"] || keys["Space"]) && player.grounded) {
+                player.vy = player.jumpForce;
+                player.grounded = false;
+            }
+
+            // Hazard Collisions
+            for (let h of hazards) {
+                if (
+                    player.x < h.x + h.width &&
+                    player.x + player.width > h.x &&
+                    player.y < h.y + h.height &&
+                    player.y + player.height > h.y
+                ) {
+                    resetPlayer();
+                }
+            }
+
+            // Moving Hazards Collisions
+            for (let mh of movingHazards) {
+                mh.y += mh.speed * mh.dir;
+                if (mh.y < mh.startY || mh.y > mh.endY) mh.dir *= -1;
+
+                let distX = Math.abs(player.x + player.width / 2 - mh.x);
+                let distY = Math.abs(player.y + player.height / 2 - mh.y);
+
+                if (distX < mh.radius + player.width / 2 && distY < mh.radius + player.height / 2) {
+                    resetPlayer();
+                }
+            }
+
+            // Fall check
+            if (player.y > canvas.height + 50) {
+                resetPlayer();
+            }
+
+            // Goal Collision Check
+            if (
+                player.x < goal.x + goal.width &&
+                player.x + player.width > goal.x &&
+                player.y < goal.y + goal.height &&
+                player.y + player.height > goal.y
+            ) {
+                if (currentLevel < 5) {
+                    currentLevel++;
+                    generateLevel(currentLevel);
+                    triggerShake(20, 4);
+                } else {
+                    gameState = STATE.VICTORY;
+                }
+            }
+
+            // UI Updates
+            uiLevel.innerText = `Level: ${currentLevel}/5`;
+            uiDeaths.innerText = `Deaths: ${totalDeaths}`;
+        }
+
+        // Render Graphics
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+            if (shakeTimer > 0) {
+                shakeTimer--;
+                let offsetX = (Math.random() - 0.5) * shakeMagnitude;
+                let offsetY = (Math.random() - 0.5) * shakeMagnitude;
+                ctx.translate(offsetX, offsetY);
+            }
+
+            if (gameState === STATE.START) {
+                ctx.fillStyle = "#ff3366";
+                ctx.font = "bold 32px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("Totally normal platformer (TNP)", canvas.width / 2, canvas.height / 2 - 30);
+                
+                ctx.fillStyle = "#aaa";
+                ctx.font = "16px sans-serif";
+                ctx.fillText("Press SPACE or UP to Start Your Pain", canvas.width / 2, canvas.height / 2 + 20);
+                ctx.restore();
+                return;
+            }
+
+            if (gameState === STATE.VICTORY) {
+                ctx.fillStyle = "#33ff66";
+                ctx.font = "bold 32px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("YOU BEAT THE TROLL GAME!", canvas.width / 2, canvas.height / 2 - 40);
+                
+                ctx.fillStyle = "#fff";
+                ctx.font = "18px sans-serif";
+                ctx.fillText(`Total Deaths Suffered: ${totalDeaths}`, canvas.width / 2, canvas.height / 2 + 10);
+                ctx.fillText("Press SPACE to Play Again", canvas.width / 2, canvas.height / 2 + 50);
+                ctx.restore();
+                return;
+            }
+
+            let cameraX = player.x - 200;
+            if (cameraX < 0) cameraX = 0;
+
+            ctx.save();
+            ctx.translate(-cameraX, 0);
+
+            // Background Grid Lines
+            ctx.strokeStyle = "#222";
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 3000; i += 100) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, canvas.height);
+                ctx.stroke();
+            }
+
+            // Solid Platforms
+            for (let p of platforms) {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+                ctx.strokeStyle = "#222";
+                ctx.strokeRect(p.x, p.y, p.width, p.height);
+            }
+
+            // Fake Platforms
+            for (let fp of fakePlatforms) {
+                ctx.fillStyle = "#666";
+                ctx.fillRect(fp.x, fp.y, fp.width, fp.height);
+                ctx.strokeStyle = "#222";
+                ctx.strokeRect(fp.x, fp.y, fp.width, fp.height);
+            }
+
+            // Spikes
+            ctx.fillStyle = "#ff2222";
+            for (let h of hazards) {
+                ctx.beginPath();
+                let spikeWidth = 12;
+                let count = Math.floor(h.width / spikeWidth);
+                for (let i = 0; i < count; i++) {
+                    let sx = h.x + (i * spikeWidth);
+                    ctx.moveTo(sx, h.y + h.height);
+                    ctx.lineTo(sx + spikeWidth / 2, h.y);
+                    ctx.lineTo(sx + spikeWidth, h.y + h.height);
+                }
+                ctx.fill();
+            }
+
+            // Moving Hazards (Saws)
+            for (let mh of movingHazards) {
+                ctx.fillStyle = "#ffcc00";
+                ctx.beginPath();
+                ctx.arc(mh.x, mh.y, mh.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = "#111";
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.fillStyle = "#111";
+                ctx.beginPath();
+                ctx.arc(mh.x, mh.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Goal
+            ctx.fillStyle = "#33ccff";
+            ctx.fillRect(goal.x, goal.y, goal.width, goal.height);
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "10px sans-serif";
+            ctx.fillText("EXIT", goal.x + 3, goal.y + 35);
+
+            // Player
+            ctx.fillStyle = player.color;
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(player.x, player.y, player.width, player.height);
+
+            ctx.restore();
+            ctx.restore();
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>
