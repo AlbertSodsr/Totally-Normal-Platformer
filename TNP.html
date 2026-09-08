@@ -22,10 +22,16 @@
             position: relative;
             box-shadow: 0 0 20px rgba(255, 0, 0, 0.3);
             border: 4px solid #333;
+            overflow: hidden;
         }
         canvas {
             display: block;
             background-color: #1a1a1a;
+            transition: transform 0.1s ease-out;
+        }
+        /* Class applied to mirror the canvas horizontally in Easy Mode */
+        canvas.mirrored {
+            transform: scaleX(-1);
         }
         .ui-overlay {
             position: absolute;
@@ -190,6 +196,10 @@
         let loadingTimer = 0;
         let loadingMessage = "";
 
+        // Flipform visual & mechanic state tracking
+        let purpleFlashTimer = 0; // In frames (15 frames = ~0.25 seconds)
+        let isFlipped = false;
+
         // Player Object
         let player = {
             x: 50,
@@ -237,6 +247,13 @@
             "Back to hard mode? Respectable. Let's see how long you survive."
         ];
 
+        // Reset Flipform Effects
+        function resetFlipState() {
+            isFlipped = false;
+            purpleFlashTimer = 0;
+            canvas.classList.remove("mirrored");
+        }
+
         // Initialize / Generate World Chunk
         function generateChunk(startX, isInitial = false) {
             if (isInitial) {
@@ -249,6 +266,8 @@
                 player.y = 300;
                 player.vx = 0;
                 player.vy = 0;
+
+                resetFlipState();
 
                 currentSeedVal = Math.floor(Math.random() * 899999 + 100000);
                 uiSeed.innerText = `Seed: TNP-${currentSeedVal}`;
@@ -263,7 +282,7 @@
             if (isInitial) {
                 platforms.push({ 
                     x: 0, y: 380, width: 160, height: 70, color: "#444", 
-                    isMoving: false, vx: 0, vy: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 
+                    isMoving: false, isFlipform: false, vx: 0, vy: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 
                 });
             }
 
@@ -301,8 +320,10 @@
                         fadeTimer: 0 
                     });
                 } else {
-                    // Chance for moving platforms
+                    // Chance for moving platform or flipform
                     let isMoving = random() < 0.25;
+                    let isFlipform = !isMoving && (random() < 0.20 && difficultyLevel > 1);
+
                     let speedVal = 0.8 + random() * 1.2;
                     let moveVx = 0;
                     let moveVy = 0;
@@ -328,6 +349,7 @@
                         height: 20, 
                         color: isMoving ? "#5577aa" : "#666",
                         isMoving: isMoving,
+                        isFlipform: isFlipform,
                         vx: moveVx,
                         vy: moveVy,
                         minX: currentX + gap - 40,
@@ -336,7 +358,7 @@
                         maxY: Math.min(380, platY + 40)
                     });
 
-                    if (random() < 0.35 && difficultyLevel > 1 && platWidth > 50) {
+                    if (random() < 0.35 && difficultyLevel > 1 && platWidth > 50 && !isFlipform) {
                         hazards.push({
                             x: currentX + gap + 10,
                             y: platY - 8,
@@ -358,7 +380,7 @@
                     }
 
                     // Chance for Honing Platform Enemy
-                    if (random() < 0.2 && difficultyLevel > 1) {
+                    if (random() < 0.2 && difficultyLevel > 1 && !isFlipform) {
                         honingEnemies.push({
                             x: currentX + gap + platWidth / 2 - 20,
                             y: platY - 60,
@@ -377,7 +399,7 @@
             goal = { x: currentX + 50, y: 320, width: 30, height: 60 };
             platforms.push({ 
                 x: currentX, y: 380, width: 220, height: 70, color: "#444", 
-                isMoving: false, vx: 0, vy: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 
+                isMoving: false, isFlipform: false, vx: 0, vy: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 
             });
         }
 
@@ -518,14 +540,29 @@
 
             if (gameState !== STATE.PLAYING && gameState !== STATE.TRANSITION) return;
 
+            if (purpleFlashTimer > 0) {
+                purpleFlashTimer--;
+            }
+
             let isMovingHorizontal = keys["ArrowLeft"] || keys["KeyA"] || keys["ArrowRight"] || keys["KeyD"];
 
             if (gameState === STATE.PLAYING) {
                 player.vx = 0;
-                if (keys["ArrowLeft"] || keys["KeyA"]) player.vx = -player.speed;
-                if (keys["ArrowRight"] || keys["KeyD"]) player.vx = player.speed;
+                
+                // Directional movement with flipform control inversion in Normal mode
+                let moveLeft = keys["ArrowLeft"] || keys["KeyA"];
+                let moveRight = keys["ArrowRight"] || keys["KeyD"];
 
-                // Move platforms with bidirectional bounds logic (2D platform movement support)
+                if (isFlipped && !settings.easyMode) {
+                    let temp = moveLeft;
+                    moveLeft = moveRight;
+                    moveRight = temp;
+                }
+
+                if (moveLeft) player.vx = -player.speed;
+                if (moveRight) player.vx = player.speed;
+
+                // Move platforms with bidirectional bounds logic
                 for (let p of platforms) {
                     if (p.isMoving) {
                         p.x += p.vx;
@@ -569,6 +606,22 @@
                             player.y = p.y - player.height;
                             player.vy = 0;
                             player.grounded = true;
+
+                            // Handle Flipform touching state logic
+                            if (p.isFlipform) {
+                                if (!isFlipped) {
+                                    isFlipped = true;
+                                    purpleFlashTimer = 15; // 0.25 sec flash
+                                    if (settings.easyMode) {
+                                        canvas.classList.add("mirrored");
+                                    }
+                                }
+                            } else {
+                                if (isFlipped) {
+                                    resetFlipState();
+                                }
+                            }
+
                             // Carry player along with platform's movement
                             if (p.isMoving) {
                                 player.x += p.vx;
@@ -607,6 +660,11 @@
                             player.y = fp.y - player.height;
                             player.vy = 0;
                             player.grounded = true;
+                            
+                            // Touching fake platform resets flip state since it's not a flipform
+                            if (isFlipped) {
+                                resetFlipState();
+                            }
                         }
                     }
 
@@ -805,7 +863,7 @@
                 ctx.strokeStyle = p.isMoving ? "#77aaff" : "#222";
                 ctx.strokeRect(p.x, p.y, p.width, p.height);
                 if (settings.showHitboxes) {
-                    ctx.strokeStyle = "#00ff00";
+                    ctx.strokeStyle = p.isFlipform ? "#aa00ff" : "#00ff00";
                     ctx.strokeRect(p.x, p.y, p.width, p.height);
                 }
             }
@@ -921,6 +979,13 @@
             }
 
             ctx.restore();
+
+            // 0.25 second purple flash effect overlay
+            if (purpleFlashTimer > 0) {
+                ctx.fillStyle = "rgba(160, 32, 240, 0.55)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
             ctx.restore();
         }
 
