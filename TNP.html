@@ -85,6 +85,7 @@
             display: none;
             z-index: 20;
             box-shadow: 0 0 15px rgba(0,0,0,0.8);
+            width: 320px;
             max-width: 400px;
         }
         .settings-menu h2, .dialog-box h2 {
@@ -92,10 +93,12 @@
             color: #ff3366;
         }
         .settings-menu label {
-            display: block;
-            margin: 15px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 12px 0;
             cursor: pointer;
-            font-size: 16px;
+            font-size: 15px;
         }
         .settings-menu button, .dialog-box button {
             background: #ff3366;
@@ -122,6 +125,30 @@
             color: #888;
             text-align: center;
         }
+        .pin-input {
+            width: 120px;
+            padding: 8px;
+            font-size: 18px;
+            text-align: center;
+            letter-spacing: 5px;
+            background: #111;
+            border: 1px solid #555;
+            color: #fff;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .slider-container input[type="range"] {
+            flex: 1;
+        }
+        .cheat-divider {
+            border-top: 1px solid #444;
+            margin: 15px 0;
+        }
     </style>
 </head>
 <body>
@@ -137,14 +164,56 @@
         <!-- Settings Menu -->
         <div class="settings-menu" id="settingsMenu">
             <h2>Settings</h2>
-            <label>
-                <input type="checkbox" id="hitboxToggle"> Show Hitboxes
+            <label style="justify-content: center;">
+                <input type="checkbox" id="easyModeToggle" style="margin-right: 8px;"> Easy Mode (For the weak)
             </label>
-            <label>
-                <input type="checkbox" id="easyModeToggle"> Easy Mode (For the weak)
-            </label>
+            <button id="openCheatsBtn" style="background: #e67e22; width: 100%; margin-top: 15px;">Cheats 🔒</button>
             <br>
-            <button id="closeSettings">Resume Game</button>
+            <button id="closeSettings" style="width: 100%; margin-top: 10px;">Resume Game</button>
+        </div>
+
+        <!-- PIN Entry Box -->
+        <div class="dialog-box" id="pinBox">
+            <h2>Enter PIN</h2>
+            <p>Enter secret PIN to unlock cheats:</p>
+            <input type="password" id="pinInput" class="pin-input" maxlength="4" placeholder="••••">
+            <div id="pinError" style="color: #ff3366; font-size: 13px; display: none; margin-bottom: 5px;">Incorrect PIN!</div>
+            <br>
+            <button id="submitPin">Unlock</button>
+            <button id="cancelPin" style="background: #555;">Cancel</button>
+        </div>
+
+        <!-- Cheats Menu -->
+        <div class="settings-menu" id="cheatsMenu">
+            <h2 style="color: #e67e22;">Cheat Engine</h2>
+            
+            <label>
+                <span>Show Hitboxes</span>
+                <input type="checkbox" id="cheatHitbox">
+            </label>
+
+            <label>
+                <span>Hitbox Mult (<span id="hitboxVal">1.0</span>x)</span>
+                <input type="range" id="cheatHitboxMult" min="0.1" max="1" step="0.1" value="1">
+            </label>
+
+            <label>
+                <span>Fly Mode</span>
+                <input type="checkbox" id="cheatFly">
+            </label>
+
+            <label>
+                <span>Invincible</span>
+                <input type="checkbox" id="cheatInvincible">
+            </label>
+
+            <label>
+                <span>Speedhack (<span id="speedVal">1.0</span>x)</span>
+                <input type="range" id="cheatSpeed" min="0.1" max="2" step="0.1" value="1">
+            </label>
+
+            <div class="cheat-divider"></div>
+            <button id="closeCheats" style="width: 100%;">Back to Menu</button>
         </div>
 
         <!-- Mockery Dialog Box -->
@@ -170,15 +239,32 @@
         const settingsBtn = document.getElementById("settingsBtn");
         const settingsMenu = document.getElementById("settingsMenu");
         const closeSettingsBtn = document.getElementById("closeSettings");
-        const hitboxToggle = document.getElementById("hitboxToggle");
         const easyModeToggle = document.getElementById("easyModeToggle");
         const dialogBox = document.getElementById("dialogBox");
         const mockeryText = document.getElementById("mockeryText");
         const confirmEasy = document.getElementById("confirmEasy");
         const cancelEasy = document.getElementById("cancelEasy");
 
+        // Cheats UI
+        const openCheatsBtn = document.getElementById("openCheatsBtn");
+        const pinBox = document.getElementById("pinBox");
+        const pinInput = document.getElementById("pinInput");
+        const pinError = document.getElementById("pinError");
+        const submitPin = document.getElementById("submitPin");
+        const cancelPin = document.getElementById("cancelPin");
+        const cheatsMenu = document.getElementById("cheatsMenu");
+        const closeCheatsBtn = document.getElementById("closeCheats");
+
+        const cheatHitbox = document.getElementById("cheatHitbox");
+        const cheatHitboxMult = document.getElementById("cheatHitboxMult");
+        const cheatFly = document.getElementById("cheatFly");
+        const cheatInvincible = document.getElementById("cheatInvincible");
+        const cheatSpeed = document.getElementById("cheatSpeed");
+        const hitboxVal = document.getElementById("hitboxVal");
+        const speedVal = document.getElementById("speedVal");
+
         // Game States
-        const STATE = { START: 0, PLAYING: 1, TRANSITION: 2, VICTORY: 3, SETTINGS: 4, DIALOG: 5, LOADING: 6 };
+        const STATE = { START: 0, PLAYING: 1, TRANSITION: 2, VICTORY: 3, SETTINGS: 4, DIALOG: 5, LOADING: 6, PIN: 7, CHEATS: 8 };
         let gameState = STATE.START;
         let previousState = STATE.PLAYING;
 
@@ -186,10 +272,15 @@
         let currentSeedVal = 0;
         let difficultyLevel = 1;
 
-        // Settings config
+        // Settings & Cheats config
         let settings = {
+            easyMode: false,
+            cheatsUnlocked: false,
             showHitboxes: false,
-            easyMode: false
+            hitboxMultiplier: 1.0,
+            fly: false,
+            invincible: false,
+            speedhack: 1.0
         };
 
         // Loading screen transition tracking
@@ -197,7 +288,7 @@
         let loadingMessage = "";
 
         // Flipform visual & mechanic state tracking
-        let purpleFlashTimer = 0; // In frames (15 frames = ~0.25 seconds)
+        let purpleFlashTimer = 0; 
         let isFlipped = false;
 
         // Player Object
@@ -208,7 +299,7 @@
             height: 24,
             vx: 0,
             vy: 0,
-            speed: 4.5,
+            baseSpeed: 4.5,
             jumpForce: -10.5,
             gravity: 0.5,
             grounded: false,
@@ -320,7 +411,6 @@
                         fadeTimer: 0 
                     });
                 } else {
-                    // Chance for moving platform or flipform
                     let isMoving = random() < 0.25;
                     let isFlipform = !isMoving && (random() < 0.20 && difficultyLevel > 1);
 
@@ -330,10 +420,8 @@
 
                     if (isMoving) {
                         if (settings.easyMode) {
-                            // Easy Mode: Up and Down movement only
                             moveVy = speedVal;
                         } else {
-                            // Normal Mode: Moves randomly (horizontal, vertical, or diagonal mix)
                             let dirChoice = Math.floor(random() * 4);
                             if (dirChoice === 0) moveVx = speedVal;
                             else if (dirChoice === 1) moveVy = speedVal;
@@ -379,7 +467,6 @@
                         });
                     }
 
-                    // Chance for Honing Platform Enemy
                     if (random() < 0.2 && difficultyLevel > 1 && !isFlipform) {
                         honingEnemies.push({
                             x: currentX + gap + platWidth / 2 - 20,
@@ -403,19 +490,26 @@
             });
         }
 
-        // Helper to compute Honing Enemy's effective hitbox based on difficulty
+        // Helper to compute Honing Enemy's effective hitbox with settings and multiplier
         function getHoningHitbox(he) {
+            let mult = settings.hitboxMultiplier;
+            let w = he.width * mult;
+            let h = he.height * mult;
+
             if (settings.easyMode) {
-                let insetX = he.width * 0.25;
-                let insetY = he.height * 0.25;
-                return {
-                    x: he.x + insetX,
-                    y: he.y + insetY,
-                    width: he.width * 0.5,
-                    height: he.height * 0.5
-                };
+                w *= 0.5;
+                h *= 0.5;
             }
-            return { x: he.x, y: he.y, width: he.width, height: he.height };
+
+            let cx = he.x + he.width / 2;
+            let cy = he.y + he.height / 2;
+
+            return {
+                x: cx - w / 2,
+                y: cy - h / 2,
+                width: w,
+                height: h
+            };
         }
 
         // Trigger loading screen reset sequence
@@ -432,23 +526,79 @@
             loadingTimer = 120; 
         }
 
-        // Settings and Dialog UI Handlers
+        // Menu View Controls
+        function hideAllMenus() {
+            settingsMenu.style.display = "none";
+            pinBox.style.display = "none";
+            cheatsMenu.style.display = "none";
+            dialogBox.style.display = "none";
+        }
+
         function toggleSettings() {
-            if (gameState === STATE.SETTINGS) {
+            if (gameState === STATE.SETTINGS || gameState === STATE.PIN || gameState === STATE.CHEATS) {
                 gameState = previousState;
-                settingsMenu.style.display = "none";
+                hideAllMenus();
             } else if (gameState === STATE.PLAYING || gameState === STATE.START) {
                 previousState = gameState;
                 gameState = STATE.SETTINGS;
+                hideAllMenus();
                 settingsMenu.style.display = "block";
             }
         }
 
         settingsBtn.addEventListener("click", toggleSettings);
         closeSettingsBtn.addEventListener("click", toggleSettings);
-        
-        hitboxToggle.addEventListener("change", (e) => {
-            settings.showHitboxes = e.target.checked;
+
+        // PIN & Cheats Handling
+        openCheatsBtn.addEventListener("click", () => {
+            if (settings.cheatsUnlocked) {
+                gameState = STATE.CHEATS;
+                hideAllMenus();
+                cheatsMenu.style.display = "block";
+            } else {
+                gameState = STATE.PIN;
+                pinInput.value = "";
+                pinError.style.display = "none";
+                hideAllMenus();
+                pinBox.style.display = "block";
+                pinInput.focus();
+            }
+        });
+
+        submitPin.addEventListener("click", () => {
+            if (pinInput.value === "1234") {
+                settings.cheatsUnlocked = true;
+                gameState = STATE.CHEATS;
+                hideAllMenus();
+                cheatsMenu.style.display = "block";
+            } else {
+                pinError.style.display = "block";
+            }
+        });
+
+        cancelPin.addEventListener("click", () => {
+            gameState = STATE.SETTINGS;
+            hideAllMenus();
+            settingsMenu.style.display = "block";
+        });
+
+        closeCheatsBtn.addEventListener("click", () => {
+            gameState = STATE.SETTINGS;
+            hideAllMenus();
+            settingsMenu.style.display = "block";
+        });
+
+        // Cheats Inputs Listeners
+        cheatHitbox.addEventListener("change", (e) => settings.showHitboxes = e.target.checked);
+        cheatHitboxMult.addEventListener("input", (e) => {
+            settings.hitboxMultiplier = parseFloat(e.target.value);
+            hitboxVal.innerText = parseFloat(e.target.value).toFixed(1);
+        });
+        cheatFly.addEventListener("change", (e) => settings.fly = e.target.checked);
+        cheatInvincible.addEventListener("change", (e) => settings.invincible = e.target.checked);
+        cheatSpeed.addEventListener("input", (e) => {
+            settings.speedhack = parseFloat(e.target.value);
+            speedVal.innerText = parseFloat(e.target.value).toFixed(1);
         });
 
         easyModeToggle.addEventListener("click", (e) => {
@@ -457,7 +607,7 @@
             if (!settings.easyMode) {
                 let randomQuote = mockeryQuotes[Math.floor(Math.random() * mockeryQuotes.length)];
                 mockeryText.innerText = randomQuote;
-                settingsMenu.style.display = "none";
+                hideAllMenus();
                 dialogBox.style.display = "block";
                 previousState = gameState;
                 gameState = STATE.DIALOG;
@@ -471,7 +621,7 @@
         });
 
         cancelEasy.addEventListener("click", () => {
-            dialogBox.style.display = "none";
+            hideAllMenus();
             settingsMenu.style.display = "block";
             gameState = STATE.SETTINGS;
         });
@@ -481,13 +631,13 @@
             keys[e.code] = true;
 
             if (e.code === "Escape") {
-                if (gameState === STATE.PLAYING || gameState === STATE.SETTINGS) {
+                if (gameState === STATE.PLAYING || gameState === STATE.SETTINGS || gameState === STATE.PIN || gameState === STATE.CHEATS) {
                     toggleSettings();
                 }
                 return;
             }
 
-            if (e.code === "KeyR" && gameState !== STATE.SETTINGS && gameState !== STATE.DIALOG && gameState !== STATE.LOADING) {
+            if (e.code === "KeyR" && gameState !== STATE.SETTINGS && gameState !== STATE.DIALOG && gameState !== STATE.LOADING && gameState !== STATE.PIN && gameState !== STATE.CHEATS) {
                 if (gameState === STATE.PLAYING || gameState === STATE.GAME_OVER) {
                     totalDeaths++;
                     triggerShake(15, 5);
@@ -510,6 +660,7 @@
         });
 
         function resetPlayer() {
+            if (settings.invincible) return; // Invincible cheat logic
             totalDeaths++;
             triggerShake(20, 8);
             difficultyLevel = 1;
@@ -522,8 +673,21 @@
             if (settings.easyMode) {
                 count = Math.floor(count * 0.5);
             }
-            let activeWidth = count * spikeWidth;
-            return { x: h.x, y: h.y, width: activeWidth, height: h.height };
+            let baseWidth = count * spikeWidth;
+            let mult = settings.hitboxMultiplier;
+            
+            let activeWidth = baseWidth * mult;
+            let activeHeight = h.height * mult;
+
+            let cx = h.x + baseWidth / 2;
+            let cy = h.y + h.height / 2;
+
+            return { 
+                x: cx - activeWidth / 2, 
+                y: cy - activeHeight / 2, 
+                width: activeWidth, 
+                height: activeHeight 
+            };
         }
 
         // Game Loop Update
@@ -547,9 +711,9 @@
             let isMovingHorizontal = keys["ArrowLeft"] || keys["KeyA"] || keys["ArrowRight"] || keys["KeyD"];
 
             if (gameState === STATE.PLAYING) {
+                let effectiveSpeed = player.baseSpeed * settings.speedhack;
                 player.vx = 0;
                 
-                // Directional movement with flipform control inversion in Normal mode
                 let moveLeft = keys["ArrowLeft"] || keys["KeyA"];
                 let moveRight = keys["ArrowRight"] || keys["KeyD"];
 
@@ -559,121 +723,132 @@
                     moveRight = temp;
                 }
 
-                if (moveLeft) player.vx = -player.speed;
-                if (moveRight) player.vx = player.speed;
+                if (moveLeft) player.vx = -effectiveSpeed;
+                if (moveRight) player.vx = effectiveSpeed;
 
-                // Move platforms with bidirectional bounds logic
-                for (let p of platforms) {
-                    if (p.isMoving) {
-                        p.x += p.vx;
-                        p.y += p.vy;
+                // Fly Cheat Controls
+                if (settings.fly) {
+                    player.vy = 0;
+                    if (keys["ArrowUp"] || keys["KeyW"] || keys["Space"]) player.vy = -effectiveSpeed;
+                    if (keys["ArrowDown"] || keys["KeyS"]) player.vy = effectiveSpeed;
+                    player.x += player.vx;
+                    player.y += player.vy;
+                } else {
+                    // Move platforms
+                    for (let p of platforms) {
+                        if (p.isMoving) {
+                            p.x += p.vx;
+                            p.y += p.vy;
 
-                        if (p.vx !== 0 && (p.x < p.minX || p.x + p.width > p.maxX)) {
-                            p.vx *= -1;
-                        }
-                        if (p.vy !== 0 && (p.y < p.minY || p.y + p.height > p.maxY)) {
-                            p.vy *= -1;
+                            if (p.vx !== 0 && (p.x < p.minX || p.x + p.width > p.maxX)) {
+                                p.vx *= -1;
+                            }
+                            if (p.vy !== 0 && (p.y < p.minY || p.y + p.height > p.maxY)) {
+                                p.vy *= -1;
+                            }
                         }
                     }
-                }
 
-                player.x += player.vx;
+                    player.x += player.vx;
 
-                for (let p of platforms) {
-                    if (
-                        player.x < p.x + p.width &&
-                        player.x + player.width > p.x &&
-                        player.y < p.y + p.height &&
-                        player.y + player.height > p.y
-                    ) {
-                        if (player.vx > 0) player.x = p.x - player.width;
-                        if (player.vx < 0) player.x = p.x + player.width;
+                    for (let p of platforms) {
+                        if (
+                            player.x < p.x + p.width &&
+                            player.x + player.width > p.x &&
+                            player.y < p.y + p.height &&
+                            player.y + player.height > p.y
+                        ) {
+                            if (player.vx > 0) player.x = p.x - player.width;
+                            if (player.vx < 0) player.x = p.x + player.width;
+                        }
                     }
-                }
 
-                player.vy += player.gravity;
-                player.y += player.vy;
-                player.grounded = false;
+                    player.vy += player.gravity;
+                    player.y += player.vy;
+                    player.grounded = false;
 
-                for (let p of platforms) {
-                    if (
-                        player.x < p.x + p.width &&
-                        player.x + player.width > p.x &&
-                        player.y < p.y + p.height &&
-                        player.y + player.height > p.y
-                    ) {
-                        if (player.vy > 0) { 
-                            player.y = p.y - player.height;
-                            player.vy = 0;
-                            player.grounded = true;
+                    for (let p of platforms) {
+                        if (
+                            player.x < p.x + p.width &&
+                            player.x + player.width > p.x &&
+                            player.y < p.y + p.height &&
+                            player.y + player.height > p.y
+                        ) {
+                            if (player.vy > 0) { 
+                                player.y = p.y - player.height;
+                                player.vy = 0;
+                                player.grounded = true;
 
-                            // Handle Flipform touching state logic
-                            if (p.isFlipform) {
-                                if (!isFlipped) {
-                                    isFlipped = true;
-                                    purpleFlashTimer = 15; // 0.25 sec flash
-                                    if (settings.easyMode) {
-                                        canvas.classList.add("mirrored");
+                                if (p.isFlipform) {
+                                    if (!isFlipped) {
+                                        isFlipped = true;
+                                        purpleFlashTimer = 15;
+                                        if (settings.easyMode) {
+                                            canvas.classList.add("mirrored");
+                                        }
+                                    }
+                                } else {
+                                    if (isFlipped) {
+                                        resetFlipState();
                                     }
                                 }
+
+                                if (p.isMoving) {
+                                    player.x += p.vx;
+                                    player.y += p.vy;
+                                }
+                            } else if (player.vy < 0) { 
+                                player.y = p.y + p.height;
+                                player.vy = 0;
+                            }
+                        }
+                    }
+
+                    // Susforms Check
+                    for (let i = fakePlatforms.length - 1; i >= 0; i--) {
+                        let fp = fakePlatforms[i];
+                        let canCollide = settings.easyMode ? true : (fp.state === 'normal');
+
+                        if (
+                            canCollide &&
+                            player.x < fp.x + fp.width &&
+                            player.x + player.width > fp.x &&
+                            player.y + player.height >= fp.y &&
+                            player.y + player.height <= fp.y + 10 &&
+                            player.vy >= 0
+                        ) {
+                            if (isMovingHorizontal) {
+                                if (fp.state === 'normal') {
+                                    fp.state = 'fading';
+                                    fp.fadeTimer = 30;
+                                }
                             } else {
+                                if (fp.state === 'fading' && !settings.easyMode) {
+                                    fp.state = 'normal';
+                                    fp.fadeTimer = 0;
+                                }
+                                player.y = fp.y - player.height;
+                                player.vy = 0;
+                                player.grounded = true;
+                                
                                 if (isFlipped) {
                                     resetFlipState();
                                 }
                             }
-
-                            // Carry player along with platform's movement
-                            if (p.isMoving) {
-                                player.x += p.vx;
-                                player.y += p.vy;
-                            }
-                        } else if (player.vy < 0) { 
-                            player.y = p.y + p.height;
-                            player.vy = 0;
                         }
-                    }
-                }
 
-                // Susforms Check
-                for (let i = fakePlatforms.length - 1; i >= 0; i--) {
-                    let fp = fakePlatforms[i];
-                    let canCollide = settings.easyMode ? true : (fp.state === 'normal');
-
-                    if (
-                        canCollide &&
-                        player.x < fp.x + fp.width &&
-                        player.x + player.width > fp.x &&
-                        player.y + player.height >= fp.y &&
-                        player.y + player.height <= fp.y + 10 &&
-                        player.vy >= 0
-                    ) {
-                        if (isMovingHorizontal) {
-                            if (fp.state === 'normal') {
-                                fp.state = 'fading';
-                                fp.fadeTimer = 30;
-                            }
-                        } else {
-                            if (fp.state === 'fading' && !settings.easyMode) {
-                                fp.state = 'normal';
-                                fp.fadeTimer = 0;
-                            }
-                            player.y = fp.y - player.height;
-                            player.vy = 0;
-                            player.grounded = true;
-                            
-                            // Touching fake platform resets flip state since it's not a flipform
-                            if (isFlipped) {
-                                resetFlipState();
+                        if (fp.state === 'fading') {
+                            fp.fadeTimer--;
+                            if (fp.fadeTimer <= 0) {
+                                fakePlatforms.splice(i, 1);
+                                triggerShake(10, 3);
                             }
                         }
                     }
 
-                    if (fp.state === 'fading') {
-                        fp.fadeTimer--;
-                        if (fp.fadeTimer <= 0) {
-                            fakePlatforms.splice(i, 1);
-                            triggerShake(10, 3);
-                        }
+                    if ((keys["ArrowUp"] || keys["KeyW"] || keys["Space"]) && player.grounded) {
+                        player.vy = player.jumpForce;
+                        player.grounded = false;
                     }
                 }
 
@@ -694,7 +869,6 @@
                         he.y += (dy / dist) * speed;
                     }
 
-                    // Jump-over kill condition
                     if (
                         player.x + player.width > he.x &&
                         player.x < he.x + he.width &&
@@ -707,7 +881,6 @@
                         continue;
                     }
 
-                    // Collision check with reduced hitbox size in Easy Mode
                     let hb = getHoningHitbox(he);
                     if (
                         player.x < hb.x + hb.width &&
@@ -717,11 +890,6 @@
                     ) {
                         resetPlayer();
                     }
-                }
-
-                if ((keys["ArrowUp"] || keys["KeyW"] || keys["Space"]) && player.grounded) {
-                    player.vy = player.jumpForce;
-                    player.grounded = false;
                 }
 
                 for (let h of hazards) {
@@ -740,10 +908,11 @@
                     mh.y += mh.speed * mh.dir;
                     if (mh.y < mh.startY || mh.y > mh.endY) mh.dir *= -1;
 
+                    let effectiveRadius = mh.radius * settings.hitboxMultiplier;
                     let distX = Math.abs(player.x + player.width / 2 - mh.x);
                     let distY = Math.abs(player.y + player.height / 2 - mh.y);
 
-                    if (distX < mh.radius + player.width / 2 && distY < mh.radius + player.height / 2) {
+                    if (distX < effectiveRadius + player.width / 2 && distY < effectiveRadius + player.height / 2) {
                         resetPlayer();
                     }
                 }
@@ -894,7 +1063,6 @@
                 ctx.strokeStyle = "#ff00ff";
                 ctx.strokeRect(he.x, he.y, he.width, he.height);
 
-                // Eye detail
                 ctx.fillStyle = "#ffffff";
                 ctx.fillRect(he.x + he.width / 2 - 4, he.y + 4, 8, 8);
                 ctx.fillStyle = "#ff0000";
@@ -947,9 +1115,10 @@
                 ctx.fill();
 
                 if (settings.showHitboxes) {
+                    let effectiveRadius = mh.radius * settings.hitboxMultiplier;
                     ctx.strokeStyle = "#00ff00";
                     ctx.beginPath();
-                    ctx.arc(mh.x, mh.y, mh.radius, 0, Math.PI * 2);
+                    ctx.arc(mh.x, mh.y, effectiveRadius, 0, Math.PI * 2);
                     ctx.stroke();
                 }
             }
@@ -966,7 +1135,7 @@
                 }
             }
 
-            ctx.fillStyle = player.color;
+            ctx.fillStyle = settings.invincible ? "#ffff00" : player.color;
             ctx.fillRect(player.x, player.y, player.width, player.height);
             ctx.strokeStyle = "#000";
             ctx.lineWidth = 2;
@@ -980,7 +1149,6 @@
 
             ctx.restore();
 
-            // 0.25 second purple flash effect overlay
             if (purpleFlashTimer > 0) {
                 ctx.fillStyle = "rgba(160, 32, 240, 0.55)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
