@@ -29,7 +29,6 @@
             background-color: #1a1a1a;
             transition: transform 0.1s ease-out;
         }
-        /* Class applied to mirror the canvas horizontally in Easy Mode */
         canvas.mirrored {
             transform: scaleX(-1);
         }
@@ -87,6 +86,8 @@
             box-shadow: 0 0 15px rgba(0,0,0,0.8);
             width: 320px;
             max-width: 400px;
+            max-height: 85vh;
+            overflow-y: auto;
         }
         .settings-menu h2, .dialog-box h2 {
             margin-top: 0;
@@ -136,14 +137,6 @@
             color: #fff;
             border-radius: 4px;
             margin: 10px 0;
-        }
-        .slider-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .slider-container input[type="range"] {
-            flex: 1;
         }
         .cheat-divider {
             border-top: 1px solid #444;
@@ -212,8 +205,38 @@
                 <input type="range" id="cheatSpeed" min="0.1" max="2" step="0.1" value="1">
             </label>
 
+            <button id="openSpawnRatesBtn" style="background: #3498db; width: 100%; margin-top: 10px;">Platform Spawn Chances</button>
+
             <div class="cheat-divider"></div>
             <button id="closeCheats" style="width: 100%;">Back to Menu</button>
+        </div>
+
+        <!-- Platform Spawn Chances Menu -->
+        <div class="settings-menu" id="spawnRatesMenu">
+            <h2 style="color: #3498db;">Spawn Rates</h2>
+            
+            <label>
+                <span>Normal (<span id="rateNormalVal">60</span>%)</span>
+                <input type="range" id="rateNormal" min="0" max="100" value="60">
+            </label>
+
+            <label>
+                <span>Moving (<span id="rateMovingVal">25</span>%)</span>
+                <input type="range" id="rateMoving" min="0" max="100" value="25">
+            </label>
+
+            <label>
+                <span>Flipform (<span id="rateFlipformVal">20</span>%)</span>
+                <input type="range" id="rateFlipform" min="0" max="100" value="20">
+            </label>
+
+            <label>
+                <span>Susform (<span id="rateSusformVal">22</span>%)</span>
+                <input type="range" id="rateSusform" min="0" max="100" value="22">
+            </label>
+
+            <div class="cheat-divider"></div>
+            <button id="closeSpawnRates" style="width: 100%;">Back to Cheats</button>
         </div>
 
         <!-- Mockery Dialog Box -->
@@ -245,7 +268,7 @@
         const confirmEasy = document.getElementById("confirmEasy");
         const cancelEasy = document.getElementById("cancelEasy");
 
-        // Cheats UI
+        // Cheats UI Elements
         const openCheatsBtn = document.getElementById("openCheatsBtn");
         const pinBox = document.getElementById("pinBox");
         const pinInput = document.getElementById("pinInput");
@@ -263,8 +286,22 @@
         const hitboxVal = document.getElementById("hitboxVal");
         const speedVal = document.getElementById("speedVal");
 
+        // Spawn Rates UI Elements
+        const openSpawnRatesBtn = document.getElementById("openSpawnRatesBtn");
+        const spawnRatesMenu = document.getElementById("spawnRatesMenu");
+        const closeSpawnRatesBtn = document.getElementById("closeSpawnRates");
+        
+        const rateNormal = document.getElementById("rateNormal");
+        const rateMoving = document.getElementById("rateMoving");
+        const rateFlipform = document.getElementById("rateFlipform");
+        const rateSusform = document.getElementById("rateSusform");
+        const rateNormalVal = document.getElementById("rateNormalVal");
+        const rateMovingVal = document.getElementById("rateMovingVal");
+        const rateFlipformVal = document.getElementById("rateFlipformVal");
+        const rateSusformVal = document.getElementById("rateSusformVal");
+
         // Game States
-        const STATE = { START: 0, PLAYING: 1, TRANSITION: 2, VICTORY: 3, SETTINGS: 4, DIALOG: 5, LOADING: 6, PIN: 7, CHEATS: 8 };
+        const STATE = { START: 0, PLAYING: 1, TRANSITION: 2, VICTORY: 3, SETTINGS: 4, DIALOG: 5, LOADING: 6, PIN: 7, CHEATS: 8, SPAWN_RATES: 9 };
         let gameState = STATE.START;
         let previousState = STATE.PLAYING;
 
@@ -272,7 +309,7 @@
         let currentSeedVal = 0;
         let difficultyLevel = 1;
 
-        // Settings & Cheats config
+        // Settings & Cheats Config
         let settings = {
             easyMode: false,
             cheatsUnlocked: false,
@@ -280,7 +317,13 @@
             hitboxMultiplier: 1.0,
             fly: false,
             invincible: false,
-            speedhack: 1.0
+            speedhack: 1.0,
+            spawnRates: {
+                normal: 0.60,
+                moving: 0.25,
+                flipform: 0.20,
+                susform: 0.22
+            }
         };
 
         // Loading screen transition tracking
@@ -291,7 +334,7 @@
         let purpleFlashTimer = 0; 
         let isFlipped = false;
 
-        // Player Object
+        // Player Base Stats
         let player = {
             x: 50,
             y: 300,
@@ -300,8 +343,8 @@
             vx: 0,
             vy: 0,
             baseSpeed: 4.5,
-            jumpForce: -10.5,
-            gravity: 0.5,
+            baseJumpForce: -10.5,
+            baseGravity: 0.5,
             grounded: false,
             color: "#ff3366"
         };
@@ -343,6 +386,34 @@
             isFlipped = false;
             purpleFlashTimer = 0;
             canvas.classList.remove("mirrored");
+        }
+
+        // Weighted helper for seamless platform spawn chance selection without gaps
+        function selectPlatformType(randomFn) {
+            let rates = [
+                { type: 'normal', weight: settings.spawnRates.normal },
+                { type: 'moving', weight: settings.spawnRates.moving },
+                { type: 'flipform', weight: settings.spawnRates.flipform },
+                { type: 'susform', weight: settings.spawnRates.susform }
+            ];
+
+            // Filter out types with 0 probability
+            rates = rates.filter(r => r.weight > 0);
+
+            // Fallback to normal platform if all are set to 0%
+            if (rates.length === 0) return 'normal';
+
+            let totalWeight = rates.reduce((sum, r) => sum + r.weight, 0);
+            let roll = randomFn() * totalWeight;
+            let current = 0;
+
+            for (let r of rates) {
+                current += r.weight;
+                if (roll <= current) {
+                    return r.type;
+                }
+            }
+            return rates[0].type;
         }
 
         // Initialize / Generate World Chunk
@@ -388,7 +459,6 @@
                 let gap = 50 + random() * (maxJumpDistance - 50);
                 let platWidth = 80 + random() * 70;
                 
-                // Reduced platform sizes: 1/2 in Normal, 3/4 in Easy mode
                 if (random() < 0.3) {
                     platWidth *= settings.easyMode ? 0.75 : 0.5;
                 }
@@ -399,9 +469,10 @@
                 if (platY < 130) platY = 130;
                 if (platY > 380) platY = 380;
 
-                let isFake = (random() < 0.22 && difficultyLevel > 1);
+                // Select platform type based on proportional spawn weights
+                let selectedType = selectPlatformType(random);
 
-                if (isFake) {
+                if (selectedType === 'susform' && difficultyLevel > 1) {
                     fakePlatforms.push({ 
                         x: currentX + gap, 
                         y: platY, 
@@ -411,8 +482,8 @@
                         fadeTimer: 0 
                     });
                 } else {
-                    let isMoving = random() < 0.25;
-                    let isFlipform = !isMoving && (random() < 0.20 && difficultyLevel > 1);
+                    let isMoving = (selectedType === 'moving');
+                    let isFlipform = (selectedType === 'flipform' && difficultyLevel > 1);
 
                     let speedVal = 0.8 + random() * 1.2;
                     let moveVx = 0;
@@ -490,7 +561,7 @@
             });
         }
 
-        // Helper to compute Honing Enemy's effective hitbox with settings and multiplier
+        // Helper to compute Honing Enemy's effective hitbox
         function getHoningHitbox(he) {
             let mult = settings.hitboxMultiplier;
             let w = he.width * mult;
@@ -520,8 +591,7 @@
             let quoteList = enable ? mockeryQuotes : disableQuotes;
             loadingMessage = quoteList[Math.floor(Math.random() * quoteList.length)];
             
-            settingsMenu.style.display = "none";
-            dialogBox.style.display = "none";
+            hideAllMenus();
             gameState = STATE.LOADING;
             loadingTimer = 120; 
         }
@@ -531,11 +601,12 @@
             settingsMenu.style.display = "none";
             pinBox.style.display = "none";
             cheatsMenu.style.display = "none";
+            spawnRatesMenu.style.display = "none";
             dialogBox.style.display = "none";
         }
 
         function toggleSettings() {
-            if (gameState === STATE.SETTINGS || gameState === STATE.PIN || gameState === STATE.CHEATS) {
+            if (gameState === STATE.SETTINGS || gameState === STATE.PIN || gameState === STATE.CHEATS || gameState === STATE.SPAWN_RATES) {
                 gameState = previousState;
                 hideAllMenus();
             } else if (gameState === STATE.PLAYING || gameState === STATE.START) {
@@ -588,6 +659,19 @@
             settingsMenu.style.display = "block";
         });
 
+        // Spawn Rates Menu Navigation
+        openSpawnRatesBtn.addEventListener("click", () => {
+            gameState = STATE.SPAWN_RATES;
+            hideAllMenus();
+            spawnRatesMenu.style.display = "block";
+        });
+
+        closeSpawnRatesBtn.addEventListener("click", () => {
+            gameState = STATE.CHEATS;
+            hideAllMenus();
+            cheatsMenu.style.display = "block";
+        });
+
         // Cheats Inputs Listeners
         cheatHitbox.addEventListener("change", (e) => settings.showHitboxes = e.target.checked);
         cheatHitboxMult.addEventListener("input", (e) => {
@@ -599,6 +683,24 @@
         cheatSpeed.addEventListener("input", (e) => {
             settings.speedhack = parseFloat(e.target.value);
             speedVal.innerText = parseFloat(e.target.value).toFixed(1);
+        });
+
+        // Spawn Rates Listeners
+        rateNormal.addEventListener("input", (e) => {
+            settings.spawnRates.normal = parseInt(e.target.value) / 100;
+            rateNormalVal.innerText = e.target.value;
+        });
+        rateMoving.addEventListener("input", (e) => {
+            settings.spawnRates.moving = parseInt(e.target.value) / 100;
+            rateMovingVal.innerText = e.target.value;
+        });
+        rateFlipform.addEventListener("input", (e) => {
+            settings.spawnRates.flipform = parseInt(e.target.value) / 100;
+            rateFlipformVal.innerText = e.target.value;
+        });
+        rateSusform.addEventListener("input", (e) => {
+            settings.spawnRates.susform = parseInt(e.target.value) / 100;
+            rateSusformVal.innerText = e.target.value;
         });
 
         easyModeToggle.addEventListener("click", (e) => {
@@ -631,13 +733,13 @@
             keys[e.code] = true;
 
             if (e.code === "Escape") {
-                if (gameState === STATE.PLAYING || gameState === STATE.SETTINGS || gameState === STATE.PIN || gameState === STATE.CHEATS) {
+                if (gameState === STATE.PLAYING || gameState === STATE.SETTINGS || gameState === STATE.PIN || gameState === STATE.CHEATS || gameState === STATE.SPAWN_RATES) {
                     toggleSettings();
                 }
                 return;
             }
 
-            if (e.code === "KeyR" && gameState !== STATE.SETTINGS && gameState !== STATE.DIALOG && gameState !== STATE.LOADING && gameState !== STATE.PIN && gameState !== STATE.CHEATS) {
+            if (e.code === "KeyR" && gameState !== STATE.SETTINGS && gameState !== STATE.DIALOG && gameState !== STATE.LOADING && gameState !== STATE.PIN && gameState !== STATE.CHEATS && gameState !== STATE.SPAWN_RATES) {
                 if (gameState === STATE.PLAYING || gameState === STATE.GAME_OVER) {
                     totalDeaths++;
                     triggerShake(15, 5);
@@ -660,7 +762,7 @@
         });
 
         function resetPlayer() {
-            if (settings.invincible) return; // Invincible cheat logic
+            if (settings.invincible) return; 
             totalDeaths++;
             triggerShake(20, 8);
             difficultyLevel = 1;
@@ -711,9 +813,14 @@
             let isMovingHorizontal = keys["ArrowLeft"] || keys["KeyA"] || keys["ArrowRight"] || keys["KeyD"];
 
             if (gameState === STATE.PLAYING) {
-                let effectiveSpeed = player.baseSpeed * settings.speedhack;
+                // Apply global speed hack multiplier to movement physics
+                let speedMult = settings.speedhack;
+                let effectiveSpeed = player.baseSpeed * speedMult;
+                let effectiveJumpForce = player.baseJumpForce * speedMult;
+                let effectiveGravity = player.baseGravity * (speedMult * speedMult);
+
                 player.vx = 0;
-                
+
                 let moveLeft = keys["ArrowLeft"] || keys["KeyA"];
                 let moveRight = keys["ArrowRight"] || keys["KeyD"];
 
@@ -734,11 +841,11 @@
                     player.x += player.vx;
                     player.y += player.vy;
                 } else {
-                    // Move platforms
+                    // Update platforms with speed hack applied to velocities
                     for (let p of platforms) {
                         if (p.isMoving) {
-                            p.x += p.vx;
-                            p.y += p.vy;
+                            p.x += p.vx * speedMult;
+                            p.y += p.vy * speedMult;
 
                             if (p.vx !== 0 && (p.x < p.minX || p.x + p.width > p.maxX)) {
                                 p.vx *= -1;
@@ -763,7 +870,7 @@
                         }
                     }
 
-                    player.vy += player.gravity;
+                    player.vy += effectiveGravity;
                     player.y += player.vy;
                     player.grounded = false;
 
@@ -794,8 +901,8 @@
                                 }
 
                                 if (p.isMoving) {
-                                    player.x += p.vx;
-                                    player.y += p.vy;
+                                    player.x += p.vx * speedMult;
+                                    player.y += p.vy * speedMult;
                                 }
                             } else if (player.vy < 0) { 
                                 player.y = p.y + p.height;
@@ -838,7 +945,7 @@
                         }
 
                         if (fp.state === 'fading') {
-                            fp.fadeTimer--;
+                            fp.fadeTimer -= speedMult;
                             if (fp.fadeTimer <= 0) {
                                 fakePlatforms.splice(i, 1);
                                 triggerShake(10, 3);
@@ -847,17 +954,17 @@
                     }
 
                     if ((keys["ArrowUp"] || keys["KeyW"] || keys["Space"]) && player.grounded) {
-                        player.vy = player.jumpForce;
+                        player.vy = effectiveJumpForce;
                         player.grounded = false;
                     }
                 }
 
-                // Update Honing Platform Enemies
+                // Update Honing Platform Enemies with global speed multiplier
                 for (let i = honingEnemies.length - 1; i >= 0; i--) {
                     let he = honingEnemies[i];
                     if (!he.alive) continue;
 
-                    let speed = settings.easyMode ? 0.6 : 2.2;
+                    let speed = (settings.easyMode ? 0.6 : 2.2) * speedMult;
                     let aggroRange = settings.easyMode ? 200 : 500;
 
                     let dx = player.x - he.x;
@@ -905,7 +1012,7 @@
                 }
 
                 for (let mh of movingHazards) {
-                    mh.y += mh.speed * mh.dir;
+                    mh.y += (mh.speed * speedMult) * mh.dir;
                     if (mh.y < mh.startY || mh.y > mh.endY) mh.dir *= -1;
 
                     let effectiveRadius = mh.radius * settings.hitboxMultiplier;
@@ -917,8 +1024,14 @@
                     }
                 }
 
+                // Void check: Boost upwards if invincible, otherwise reset
                 if (player.y > canvas.height + 50) {
-                    resetPlayer();
+                    if (settings.invincible) {
+                        player.vy = -18 * settings.speedhack;
+                        triggerShake(10, 4);
+                    } else {
+                        resetPlayer();
+                    }
                 }
 
                 if (
