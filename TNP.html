@@ -128,6 +128,7 @@
         <button class="settings-btn" id="settingsBtn">Settings (ESC)</button>
         <div id="ui-seed" class="seed-display">Seed: --</div>
         
+        <!-- Settings Menu -->
         <div class="settings-menu" id="settingsMenu">
             <h2>Settings</h2>
             <label>
@@ -140,6 +141,7 @@
             <button id="closeSettings">Resume Game</button>
         </div>
 
+        <!-- Mockery Dialog Box -->
         <div class="dialog-box" id="dialogBox">
             <h2>Are you sure about that?</h2>
             <p id="mockeryText">Really? Turning on Easy Mode? Do you need a safety blanket and a pacifier too? Fine, click confirm if your fingers are too tired to jump properly.</p>
@@ -208,7 +210,7 @@
         let hazards = []; 
         let fakePlatforms = []; 
         let movingHazards = []; 
-        let honingEnemies = []; // Honing platforms/enemies
+        let honingEnemies = []; 
         let goal = {};
 
         let transitionQueue = [];
@@ -261,7 +263,7 @@
             if (isInitial) {
                 platforms.push({ 
                     x: 0, y: 380, width: 160, height: 70, color: "#444", 
-                    isMoving: false, vx: 0, minX: 0, maxX: 0 
+                    isMoving: false, vx: 0, vy: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 
                 });
             }
 
@@ -276,9 +278,9 @@
                 let gap = 50 + random() * (maxJumpDistance - 50);
                 let platWidth = 80 + random() * 70;
                 
-                // Normal Mode only: 30% chance to cut platform size in half
-                if (!settings.easyMode && random() < 0.3) {
-                    platWidth *= 0.5;
+                // Reduced platform sizes: 1/2 in Normal, 3/4 in Easy mode
+                if (random() < 0.3) {
+                    platWidth *= settings.easyMode ? 0.75 : 0.5;
                 }
 
                 let heightDelta = (random() - 0.5) * (maxVerticalStep * 1.5);
@@ -301,8 +303,24 @@
                 } else {
                     // Chance for moving platforms
                     let isMoving = random() < 0.25;
-                    let moveSpeed = isMoving ? (0.8 + random() * 1.2) : 0;
-                    
+                    let speedVal = 0.8 + random() * 1.2;
+                    let moveVx = 0;
+                    let moveVy = 0;
+
+                    if (isMoving) {
+                        if (settings.easyMode) {
+                            // Easy Mode: Up and Down movement only
+                            moveVy = speedVal;
+                        } else {
+                            // Normal Mode: Moves randomly (horizontal, vertical, or diagonal mix)
+                            let dirChoice = Math.floor(random() * 4);
+                            if (dirChoice === 0) moveVx = speedVal;
+                            else if (dirChoice === 1) moveVy = speedVal;
+                            else if (dirChoice === 2) { moveVx = speedVal * 0.7; moveVy = speedVal * 0.7; }
+                            else { moveVx = -speedVal * 0.7; moveVy = speedVal * 0.7; }
+                        }
+                    }
+
                     platforms.push({ 
                         x: currentX + gap, 
                         y: platY, 
@@ -310,12 +328,15 @@
                         height: 20, 
                         color: isMoving ? "#5577aa" : "#666",
                         isMoving: isMoving,
-                        vx: moveSpeed,
+                        vx: moveVx,
+                        vy: moveVy,
                         minX: currentX + gap - 40,
-                        maxX: currentX + gap + 60
+                        maxX: currentX + gap + 60,
+                        minY: Math.max(100, platY - 40),
+                        maxY: Math.min(380, platY + 40)
                     });
 
-                    if (random() < 0.35 && difficultyLevel > 1 && platWidth > 60) {
+                    if (random() < 0.35 && difficultyLevel > 1 && platWidth > 50) {
                         hazards.push({
                             x: currentX + gap + 10,
                             y: platY - 8,
@@ -344,7 +365,7 @@
                             width: 40,
                             height: 16,
                             alive: true,
-                            cleared: false // track if player leaped over it
+                            cleared: false
                         });
                     }
                 }
@@ -356,8 +377,23 @@
             goal = { x: currentX + 50, y: 320, width: 30, height: 60 };
             platforms.push({ 
                 x: currentX, y: 380, width: 220, height: 70, color: "#444", 
-                isMoving: false, vx: 0, minX: 0, maxX: 0 
+                isMoving: false, vx: 0, vy: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 
             });
+        }
+
+        // Helper to compute Honing Enemy's effective hitbox based on difficulty
+        function getHoningHitbox(he) {
+            if (settings.easyMode) {
+                let insetX = he.width * 0.25;
+                let insetY = he.height * 0.25;
+                return {
+                    x: he.x + insetX,
+                    y: he.y + insetY,
+                    width: he.width * 0.5,
+                    height: he.height * 0.5
+                };
+            }
+            return { x: he.x, y: he.y, width: he.width, height: he.height };
         }
 
         // Trigger loading screen reset sequence
@@ -489,12 +525,17 @@
                 if (keys["ArrowLeft"] || keys["KeyA"]) player.vx = -player.speed;
                 if (keys["ArrowRight"] || keys["KeyD"]) player.vx = player.speed;
 
-                // Move platforms
+                // Move platforms with bidirectional bounds logic (2D platform movement support)
                 for (let p of platforms) {
                     if (p.isMoving) {
                         p.x += p.vx;
-                        if (p.x < p.minX || p.x + p.width > p.maxX) {
+                        p.y += p.vy;
+
+                        if (p.vx !== 0 && (p.x < p.minX || p.x + p.width > p.maxX)) {
                             p.vx *= -1;
+                        }
+                        if (p.vy !== 0 && (p.y < p.minY || p.y + p.height > p.maxY)) {
+                            p.vy *= -1;
                         }
                     }
                 }
@@ -528,9 +569,10 @@
                             player.y = p.y - player.height;
                             player.vy = 0;
                             player.grounded = true;
-                            // Carry player on moving platform
+                            // Carry player along with platform's movement
                             if (p.isMoving) {
                                 player.x += p.vx;
+                                player.y += p.vy;
                             }
                         } else if (player.vy < 0) { 
                             player.y = p.y + p.height;
@@ -582,7 +624,6 @@
                     let he = honingEnemies[i];
                     if (!he.alive) continue;
 
-                    // Nerfed speed & tracking range in Easy Mode
                     let speed = settings.easyMode ? 0.6 : 2.2;
                     let aggroRange = settings.easyMode ? 200 : 500;
 
@@ -595,7 +636,7 @@
                         he.y += (dy / dist) * speed;
                     }
 
-                    // Check jump-over kill condition: if player passes over top of honing enemy without touching
+                    // Jump-over kill condition
                     if (
                         player.x + player.width > he.x &&
                         player.x < he.x + he.width &&
@@ -608,12 +649,13 @@
                         continue;
                     }
 
-                    // Collision check (Kills player)
+                    // Collision check with reduced hitbox size in Easy Mode
+                    let hb = getHoningHitbox(he);
                     if (
-                        player.x < he.x + he.width &&
-                        player.x + player.width > he.x &&
-                        player.y < he.y + he.height &&
-                        player.y + player.height > he.y
+                        player.x < hb.x + hb.width &&
+                        player.x + player.width > hb.x &&
+                        player.y < hb.y + hb.height &&
+                        player.y + player.height > hb.y
                     ) {
                         resetPlayer();
                     }
@@ -794,15 +836,16 @@
                 ctx.strokeStyle = "#ff00ff";
                 ctx.strokeRect(he.x, he.y, he.width, he.height);
 
-                // Eye detail to show it's tracking
+                // Eye detail
                 ctx.fillStyle = "#ffffff";
                 ctx.fillRect(he.x + he.width / 2 - 4, he.y + 4, 8, 8);
                 ctx.fillStyle = "#ff0000";
                 ctx.fillRect(he.x + he.width / 2 - 2, he.y + 6, 4, 4);
 
                 if (settings.showHitboxes) {
+                    let hb = getHoningHitbox(he);
                     ctx.strokeStyle = "#00ff00";
-                    ctx.strokeRect(he.x, he.y, he.width, he.height);
+                    ctx.strokeRect(hb.x, hb.y, hb.width, hb.height);
                 }
             }
 
